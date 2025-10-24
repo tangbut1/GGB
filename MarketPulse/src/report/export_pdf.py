@@ -75,7 +75,13 @@ class PDFReportGenerator:
     # ------------------------------------------------------------------
     def _load_font(self, doc: fitz.Document) -> str:
         """加载支持中文的字体，找不到则回退到默认字体。"""
+        # Windows系统常见中文字体路径
         candidate_paths = [
+            Path("C:/Windows/Fonts/simsun.ttc"),  # 宋体
+            Path("C:/Windows/Fonts/simhei.ttf"),  # 黑体
+            Path("C:/Windows/Fonts/msyh.ttc"),    # 微软雅黑
+            Path("C:/Windows/Fonts/simkai.ttf"), # 楷体
+            Path("C:/Windows/Fonts/simfang.ttf"), # 仿宋
             Path(__file__).resolve().parents[2] / "assets" / "fonts" / "NotoSansSC-Regular.otf",
             Path("/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc"),
             Path("/usr/share/fonts/truetype/noto/NotoSansSC-Regular.otf"),
@@ -86,9 +92,15 @@ class PDFReportGenerator:
         for font_path in candidate_paths:
             if font_path.exists():
                 try:
-                    return doc.insert_font(file=str(font_path))
-                except RuntimeError:
+                    # 使用正确的方法加载字体
+                    font_name = doc._insert_font(str(font_path))
+                    print(f"✅ 成功加载字体: {font_path} -> {font_name}")
+                    return font_name
+                except (RuntimeError, AttributeError, TypeError) as e:
+                    print(f"⚠️ 字体加载失败: {font_path} - {e}")
                     continue
+        
+        print("⚠️ 未找到中文字体，使用默认字体（可能显示乱码）")
         return "helv"
 
     def _start_new_page(self) -> None:

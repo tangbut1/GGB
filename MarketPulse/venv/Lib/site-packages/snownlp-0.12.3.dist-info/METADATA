@@ -1,0 +1,16 @@
+Metadata-Version: 2.4
+Name: snownlp
+Version: 0.12.3
+Summary: Python library for processing Chinese text
+Home-page: https://github.com/isnowfy/snownlp
+Author: isnowfy
+Classifier: Development Status :: 3 - Alpha
+Classifier: Intended Audience :: Developers
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Programming Language :: Python
+License-File: LICENSE.md
+Dynamic: author
+Dynamic: classifier
+Dynamic: home-page
+Dynamic: license-file
+Dynamic: summary

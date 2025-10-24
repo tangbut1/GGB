@@ -33,18 +33,22 @@ class DataCleaner:
         # 1. 去除HTML标签
         text = re.sub(r'<[^>]+>', '', text)
         
-        # 2. 去除特殊字符和多余空格
-        text = re.sub(r'[^\u4e00-\u9fa5a-zA-Z0-9\s]', ' ', text)
+        # 2. 去除特殊字符但保留字母、数字、中文和基本标点
+        text = re.sub(r'[^\u4e00-\u9fa5a-zA-Z0-9\s.,!?;:\-()]', ' ', text)
         text = re.sub(r'\s+', ' ', text)
         
-        # 3. 去除数字和英文单词（保留中文）
-        text = re.sub(r'[a-zA-Z0-9]+', '', text)
+        # 3. 不再删除英文内容，支持中英文混合
+        # 只去除过短的数字序列（如单个数字）
+        text = re.sub(r'\b\d{1,2}\b', '', text)
         
-        # 4. 去除停用词
-        words = jieba.lcut(text)
-        cleaned_words = [word for word in words if word not in self.stop_words and len(word) > 1]
-        
-        return ' '.join(cleaned_words).strip()
+        # 4. 对于中文内容，去除停用词
+        if re.search(r'[\u4e00-\u9fa5]', text):  # 如果包含中文
+            words = jieba.lcut(text)
+            cleaned_words = [word for word in words if word not in self.stop_words and len(word) > 1]
+            return ' '.join(cleaned_words).strip()
+        else:
+            # 对于纯英文内容，只做基本清理
+            return text.strip()
     
     def clean_news_batch(self, news_list: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
@@ -62,21 +66,39 @@ class DataCleaner:
             if not isinstance(news, dict):
                 continue
                 
+            # 获取原始数据
+            original_title = news.get('title', '')
+            original_content = news.get('content', '')
+            original_summary = news.get('summary', '')
+            
+            # 清洗文本
+            cleaned_title = self.clean_text(original_title)
+            cleaned_content = self.clean_text(original_content)
+            cleaned_summary = self.clean_text(original_summary)
+            
+            # 如果清洗后为空，使用原始数据
+            if not cleaned_title and original_title:
+                cleaned_title = original_title
+            if not cleaned_content and original_content:
+                cleaned_content = original_content
+            if not cleaned_summary and original_summary:
+                cleaned_summary = original_summary
+                
             cleaned_item = {
-                'title': self.clean_text(news.get('title', '')),
-                'content': self.clean_text(news.get('content', '')),
-                'summary': self.clean_text(news.get('summary', '')),
+                'title': cleaned_title,
+                'content': cleaned_content,
+                'summary': cleaned_summary,
                 'url': news.get('url') or news.get('link', ''),
                 'publish_time': news.get('publish_time', news.get('published', '')),
                 'source': news.get('source', ''),
                 'category': news.get('category', ''),
-                'original_title': news.get('title', ''),
-                'original_summary': news.get('summary', ''),
-                'original_content': news.get('content', '')
+                'original_title': original_title,
+                'original_summary': original_summary,
+                'original_content': original_content
             }
             
-            # 只保留有内容的新闻
-            if cleaned_item['title'] or cleaned_item['content']:
+            # 保留有标题的新闻（降低过滤条件）
+            if cleaned_item['title']:
                 cleaned_news.append(cleaned_item)
         
         return cleaned_news

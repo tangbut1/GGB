@@ -5,6 +5,7 @@ import pandas as pd
 import streamlit as st
 
 from src.collect.news_collector import NewsCollector
+from src.collect.custom_search import CustomSearchCollector
 from src.preprocess.cleaner import DataCleaner
 from src.analysis.sentiment_analysis import SentimentAnalyzer
 from src.analysis.trend_prediction import TrendPredictor
@@ -31,6 +32,7 @@ def ensure_dirs():
 DEFAULT_CATEGORIES = ["科技", "金融", "国际", "股票"]
 DATA_SOURCE_CHOICES: Dict[str, str] = {
     "在线新闻采集": "online",
+    "自定义关键词搜索": "custom",
     "本地表格数据": "local",
     "在线 + 本地数据": "hybrid"
 }
@@ -98,7 +100,8 @@ def run_pipeline(data_source: str,
                  selected_categories: List[str],
                  local_records: Optional[List[Dict[str, Any]]] = None,
                  ai_config: Optional[Dict[str, Any]] = None,
-                 local_preview: Optional[pd.DataFrame] = None) -> None:
+                 local_preview: Optional[pd.DataFrame] = None,
+                 custom_keyword: Optional[str] = None) -> None:
     st.session_state.setdefault("news", [])
     st.session_state.setdefault("cleaned_news", [])
     st.session_state.setdefault("sentiment_results", [])
@@ -115,7 +118,7 @@ def run_pipeline(data_source: str,
     collector = NewsCollector(categories=selected_categories)
 
     # 1️⃣ 数据采集
-    if data_source in {"online", "hybrid"}:
+    if data_source == "online":
         with st.spinner("正在采集新闻数据..."):
             online_news = collector.run_full_pipeline()
             if online_news:
@@ -123,6 +126,31 @@ def run_pipeline(data_source: str,
                 aggregated_news.extend(online_news)
             else:
                 st.warning("⚠️ 未能获取在线新闻，请检查网络或RSS源。")
+    
+    # 自定义搜索数据采集
+    if data_source == "custom" and custom_keyword:
+        with st.spinner(f"正在搜索关键词: {custom_keyword}..."):
+            custom_collector = CustomSearchCollector()
+            custom_news = custom_collector.run_custom_search(custom_keyword, max_results=80)
+            if custom_news:
+                st.success(f"✅ 已搜索到 {len(custom_news)} 条相关新闻！")
+                aggregated_news.extend(custom_news)
+            else:
+                st.warning("⚠️ 未能搜索到相关新闻，请尝试其他关键词。")
+    
+    # 混合数据源：自定义搜索 + 本地数据
+    if data_source == "hybrid":
+        if custom_keyword:
+            with st.spinner(f"正在搜索关键词: {custom_keyword}..."):
+                custom_collector = CustomSearchCollector()
+                custom_news = custom_collector.run_custom_search(custom_keyword, max_results=80)
+                if custom_news:
+                    st.success(f"✅ 已搜索到 {len(custom_news)} 条相关新闻！")
+                    aggregated_news.extend(custom_news)
+                else:
+                    st.warning("⚠️ 未能搜索到相关新闻，请尝试其他关键词。")
+        else:
+            st.warning("⚠️ 混合模式需要输入搜索关键词")
 
     # 额外合并本地数据
     if data_source in {"local", "hybrid"} and local_records:
@@ -371,28 +399,87 @@ def main():
         )
         data_source = DATA_SOURCE_CHOICES[data_source_label]
 
-        category_options = list(DEFAULT_CATEGORIES)
-        selected_categories = st.multiselect(
-            "新闻类别",
-            category_options,
-            default=state.get("selected_categories", DEFAULT_CATEGORIES)
-        )
-        if not selected_categories:
-            st.warning("至少选择一个类别，已默认选择全部。")
-            selected_categories = DEFAULT_CATEGORIES
+        # 只在在线新闻采集时显示新闻类别选择
+        if data_source == "online":
+            st.markdown("#### 📰 新闻类别配置")
+            category_options = list(DEFAULT_CATEGORIES)
+            selected_categories = st.multiselect(
+                "选择新闻类别",
+                category_options,
+                default=state.get("selected_categories", DEFAULT_CATEGORIES),
+                help="选择要采集的新闻类别"
+            )
+            if not selected_categories:
+                st.warning("至少选择一个类别，已默认选择全部。")
+                selected_categories = DEFAULT_CATEGORIES
+        else:
+            selected_categories = DEFAULT_CATEGORIES  # 其他数据源使用默认类别
 
-        if data_source in {"local", "hybrid"}:
+        # 根据数据源显示不同的配置选项
+        custom_keyword = None
+        local_records = []
+        local_preview_df = None
+        
+        if data_source == "custom":
+            st.markdown("#### 🔍 自定义搜索配置")
+            st.caption("输入您感兴趣的关键词，系统将搜索相关新闻进行分析。")
+            custom_keyword = st.text_input(
+                "搜索关键词",
+                placeholder="例如：CS2市场、人工智能、新能源汽车、比特币等",
+                key="custom_keyword_input",
+                help="系统将从Google和Bing搜索相关新闻，确保关键词具体明确"
+            )
+            if not custom_keyword:
+                st.warning("⚠️ 请输入搜索关键词")
+            else:
+                st.success(f"✅ 将搜索关键词: {custom_keyword}")
+                
+        elif data_source == "local":
+            st.markdown("#### 📁 本地数据配置")
             st.caption("支持CSV、XLS/XLSX或JSON格式，需包含标题、内容等字段。")
             uploaded_file = st.file_uploader(
                 "上传本地数据文件",
                 type=["csv", "xls", "xlsx", "json"],
-                key="local_uploader"
+                key="local_uploader",
+                help="文件应包含title、content、summary等字段"
             )
             if uploaded_file is not None:
                 local_records, local_preview_df = load_local_table(uploaded_file)
-                st.caption(f"已读取 {len(local_records)} 条本地数据。")
+                st.success(f"✅ 已读取 {len(local_records)} 条本地数据")
             else:
-                local_records, local_preview_df = [], None
+                st.info("请上传数据文件")
+                
+        elif data_source == "hybrid":
+            st.markdown("#### 🔍 混合数据配置")
+            st.caption("结合自定义关键词搜索和本地数据进行分析")
+            
+            # 自定义搜索部分
+            st.markdown("**在线数据（自定义搜索）**")
+            custom_keyword = st.text_input(
+                "搜索关键词",
+                placeholder="例如：CS2市场、人工智能、新能源汽车等",
+                key="hybrid_custom_keyword_input",
+                help="系统将从Google和Bing搜索相关新闻"
+            )
+            
+            # 本地数据部分
+            st.markdown("**本地数据**")
+            uploaded_file = st.file_uploader(
+                "上传本地数据文件",
+                type=["csv", "xls", "xlsx", "json"],
+                key="hybrid_local_uploader",
+                help="文件应包含title、content、summary等字段"
+            )
+            if uploaded_file is not None:
+                local_records, local_preview_df = load_local_table(uploaded_file)
+                st.success(f"✅ 已读取 {len(local_records)} 条本地数据")
+            else:
+                st.info("请上传数据文件")
+                
+        elif data_source == "online":
+            st.markdown("#### 🌐 在线数据配置")
+            st.caption("系统将从RSS源采集最新7天内的新闻数据")
+            st.info("✅ 将采集科技、金融、国际、股票类别的新闻")
 
         ai_labels = list(AI_PROVIDER_CHOICES.keys())
         current_ai_label = next(
@@ -454,7 +541,8 @@ def main():
             selected_categories,
             local_records,
             ai_config,
-            local_preview_df
+            local_preview_df,
+            custom_keyword
         )
 
     display_results()

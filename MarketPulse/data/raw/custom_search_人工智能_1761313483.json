@@ -1,0 +1,29 @@
+[
+  {
+    "title": "人工智能相关新闻：市场动态分析",
+    "link": "https://example.com/news1",
+    "summary": "关于人工智能的最新市场动态和发展趋势分析。",
+    "source": "示例数据源",
+    "publish_time": "2024-10-24",
+    "category": "自定义搜索",
+    "search_keyword": "人工智能"
+  },
+  {
+    "title": "人工智能行业报告：投资机会分析",
+    "link": "https://example.com/news2",
+    "summary": "深入分析人工智能行业的投资机会和风险因素。",
+    "source": "示例数据源",
+    "publish_time": "2024-10-24",
+    "category": "自定义搜索",
+    "search_keyword": "人工智能"
+  },
+  {
+    "title": "人工智能技术发展：创新突破",
+    "link": "https://example.com/news3",
+    "summary": "人工智能领域的技术创新和突破性进展。",
+    "source": "示例数据源",
+    "publish_time": "2024-10-24",
+    "category": "自定义搜索",
+    "search_keyword": "人工智能"
+  }
+]

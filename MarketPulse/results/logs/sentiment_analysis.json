@@ -1,0 +1,11 @@
+{
+  "summary": {
+    "total_news": 0,
+    "positive_count": 0,
+    "negative_count": 0,
+    "neutral_count": 0,
+    "avg_sentiment": 0.0,
+    "sentiment_distribution": {}
+  },
+  "detailed_results": []
+}

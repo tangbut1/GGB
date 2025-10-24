@@ -66,9 +66,13 @@ class DataCleaner:
                 'title': self.clean_text(news.get('title', '')),
                 'content': self.clean_text(news.get('content', '')),
                 'summary': self.clean_text(news.get('summary', '')),
-                'url': news.get('url', ''),
-                'publish_time': news.get('publish_time', ''),
-                'source': news.get('source', '')
+                'url': news.get('url') or news.get('link', ''),
+                'publish_time': news.get('publish_time', news.get('published', '')),
+                'source': news.get('source', ''),
+                'category': news.get('category', ''),
+                'original_title': news.get('title', ''),
+                'original_summary': news.get('summary', ''),
+                'original_content': news.get('content', '')
             }
             
             # 只保留有内容的新闻

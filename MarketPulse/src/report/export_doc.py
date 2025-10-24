@@ -2,10 +2,10 @@ from docx import Document
 from docx.shared import Inches, Pt
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.enum.table import WD_TABLE_ALIGNMENT
+from docx.oxml.ns import qn
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from datetime import datetime
-import json
 
 
 class DOCXReportGenerator:
@@ -18,7 +18,8 @@ class DOCXReportGenerator:
                      trend_summary: Dict[str, Any],
                      analyzed_news: List[Dict[str, Any]],
                      trend_data: Dict[str, Any],
-                     output_path: str = "results/reports/market_analysis_report.docx") -> str:
+                     output_path: str = "results/reports/market_analysis_report.docx",
+                     chart_paths: Optional[Dict[str, Path]] = None) -> str:
         """
         创建完整的DOCX报告
         
@@ -58,6 +59,10 @@ class DOCXReportGenerator:
         
         # 添加结论和建议
         self._add_conclusions(sentiment_summary, trend_summary)
+
+        # 图表合集
+        if chart_paths:
+            self._add_chart_gallery(chart_paths)
         
         # 保存文档
         Path(output_path).parent.mkdir(parents=True, exist_ok=True)
@@ -73,6 +78,7 @@ class DOCXReportGenerator:
         font = style.font
         font.name = '微软雅黑'
         font.size = Pt(12)
+        font._element.rPr.rFonts.set(qn('w:eastAsia'), '微软雅黑')
     
     def _add_title_page(self, sentiment_summary: Dict[str, Any]):
         """添加标题页"""
@@ -293,62 +299,86 @@ class DOCXReportGenerator:
             
             self.doc.add_paragraph()  # 添加空行
     
-    def _add_conclusions(self, sentiment_summary: Dict[str, Any], 
+    def _add_conclusions(self, sentiment_summary: Dict[str, Any],
                         trend_summary: Dict[str, Any]):
         """添加结论与建议"""
         self.doc.add_heading('5. 结论与建议', level=1)
-        
+
         # 综合结论
         avg_sentiment = sentiment_summary.get('avg_sentiment', 0)
         total_news = sentiment_summary.get('total_news', 0)
-        
+
         conclusion_text = f"""
-基于对 {total_news} 条新闻的深度分析，当前市场情绪得分为 {avg_sentiment:.3f}。
+    基于对 {total_news} 条新闻的深度分析，当前市场情绪得分为 {avg_sentiment:.3f}。
         """
-        
+
         self.doc.add_paragraph(conclusion_text.strip())
-        
+
         # 投资建议
         if trend_summary.get('status') == 'success':
             trend_direction = trend_summary.get('trend_direction', 'neutral')
-            
+
             if trend_direction == 'positive':
                 advice = "建议关注市场机会，适当增加投资配置。"
             elif trend_direction == 'negative':
                 advice = "建议谨慎投资，适当降低风险敞口。"
             else:
                 advice = "建议保持观望，等待更明确的市场信号。"
-            
+
             self.doc.add_paragraph(f"投资建议: {advice}")
-        
+
         # 风险提示
         self.doc.add_heading('风险提示', level=2)
         risk_warning = """
-本报告基于历史数据和模型预测，仅供参考，不构成投资建议。
-投资有风险，决策需谨慎。
+    本报告基于历史数据和模型预测，仅供参考，不构成投资建议。
+    投资有风险，决策需谨慎。
         """
-        
+
         self.doc.add_paragraph(risk_warning.strip())
+
+    def _add_chart_gallery(self, chart_paths: Dict[str, Path]):
+        """添加图表合集"""
+        if not chart_paths:
+            return
+
+        chart_titles = {
+            'sentiment_distribution': '情绪分布图',
+            'sentiment_timeline': '情绪时间线',
+            'trend_prediction': '趋势预测曲线',
+            'sentiment_heatmap': '情绪热力图'
+        }
+
+        self.doc.add_heading('6. 图表合集', level=1)
+        for key, path in chart_paths.items():
+            chart_file = Path(path)
+            if not chart_file.exists():
+                continue
+            title = chart_titles.get(key, chart_file.stem)
+            self.doc.add_heading(title, level=2)
+            self.doc.add_picture(str(chart_file), width=Inches(5.5))
+            self.doc.add_paragraph(f"图像来源: {chart_file.name}")
 
 
 def generate_docx_report(sentiment_summary: Dict[str, Any],
-                       trend_summary: Dict[str, Any],
-                       analyzed_news: List[Dict[str, Any]],
-                       trend_data: Dict[str, Any],
-                       output_path: str = "results/reports/market_analysis_report.docx") -> str:
+                        trend_summary: Dict[str, Any],
+                        analyzed_news: List[Dict[str, Any]],
+                        trend_data: Dict[str, Any],
+                        output_path: str = "results/reports/market_analysis_report.docx",
+                        chart_paths: Optional[Dict[str, Path]] = None) -> str:
     """
     便捷函数：生成DOCX报告
-    
+
     Args:
         sentiment_summary: 情绪分析摘要
         trend_summary: 趋势分析摘要
         analyzed_news: 已分析的新闻数据
         trend_data: 趋势预测数据
         output_path: 输出路径
-        
+        chart_paths: 图表资源路径
+
     Returns:
         生成的DOCX文件路径
     """
     generator = DOCXReportGenerator()
-    return generator.create_report(sentiment_summary, trend_summary, 
-                                 analyzed_news, trend_data, output_path)
+    return generator.create_report(sentiment_summary, trend_summary,
+                                   analyzed_news, trend_data, output_path, chart_paths)

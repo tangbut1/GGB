@@ -4,7 +4,7 @@ from typing import List, Literal, Optional
 import requests
 
 
-Provider = Literal["openai", "meta", "huggingface", "none"]
+Provider = Literal["openai", "meta", "huggingface", "custom", "none"]
 
 
 class AIClient:
@@ -65,6 +65,30 @@ class AIClient:
                         score = float(r["score"]) if "score" in r else 0.5
                         scores.append(score if "pos" in label else (-score if "neg" in label else 0.0))
                 return scores
+            except Exception:
+                return [0.0 for _ in texts]
+        if self.provider == "custom":
+            if not self.endpoint:
+                return [0.0 for _ in texts]
+            headers = {"Content-Type": "application/json"}
+            if self.api_key:
+                headers["Authorization"] = f"Bearer {self.api_key}"
+            outputs: List[float] = []
+            try:
+                for chunk in _batch(texts, 16):
+                    payload = {"texts": list(chunk)}
+                    resp = requests.post(self.endpoint, json=payload, headers=headers, timeout=60)
+                    resp.raise_for_status()
+                    data = resp.json()
+                    if isinstance(data, dict):
+                        data = data.get("scores") or data.get("data") or data.get("result")
+                    if isinstance(data, list):
+                        scores = [max(-1.0, min(1.0, float(x))) for x in data]
+                        if len(scores) == len(chunk):
+                            outputs.extend(scores)
+                            continue
+                    outputs.extend([0.0] * len(chunk))
+                return outputs
             except Exception:
                 return [0.0 for _ in texts]
         if self.provider == "meta":

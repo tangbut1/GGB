@@ -12,35 +12,93 @@ from loguru import logger
 class NewsCollector:
     """多源财经新闻采集器 - 支持多个RSS源，自动去重和容错"""
 
-    def __init__(self):
+    def __init__(self, categories=None):
         self.data_dir = Path(__file__).resolve().parents[2] / "data"
         self.data_dir.mkdir(exist_ok=True)
-        
-        # 多源RSS配置（自动fallback）
-        self.rss_feeds = [
-            "https://rss.sina.com.cn/finance/china/focus15.xml",   # 新浪财经焦点
-            "https://rss.sina.com.cn/finance/global/index.xml",   # 新浪国际财经
-            "https://rss.sina.com.cn/finance/china/stock20.xml",  # 新浪股票
-            "https://finance.eastmoney.com/rss/stock.xml",        # 东方财富
-            "https://finance.yahoo.com/news/rssindex",             # 雅虎财经
-            "https://feeds.finance.yahoo.com/rss/2.0/headline",    # 雅虎财经头条
-        ]
+
+        # 多源RSS配置（按类别组织，便于用户选择）
+        self.category_feeds = {
+            "科技": [
+                "https://rss.sina.com.cn/tech/it/itroll.xml",
+                "https://rss.sina.com.cn/tech/tele/tele_it.xml",
+                "https://www.thepaper.cn/channel_27262?page=1&RSS=1"
+            ],
+            "金融": [
+                "https://rss.sina.com.cn/finance/china/focus15.xml",
+                "https://finance.eastmoney.com/rss/chaoguxinwen.xml",
+                "https://www.cs.com.cn/rss/finance.xml"
+            ],
+            "国际": [
+                "https://rss.sina.com.cn/finance/global/index.xml",
+                "https://www.ftchinese.com/rss/news",
+                "https://www.reuters.com/world/china/rss"
+            ],
+            "股票": [
+                "https://rss.sina.com.cn/finance/china/stock20.xml",
+                "https://finance.eastmoney.com/rss/stock.xml",
+                "https://www.21jingji.com/rss/stock.xml"
+            ]
+        }
+
+        self.category_alias_map = {
+            "tech": "科技",
+            "科技": "科技",
+            "technology": "科技",
+            "finance": "金融",
+            "金融": "金融",
+            "international": "国际",
+            "国际": "国际",
+            "global": "国际",
+            "stock": "股票",
+            "stocks": "股票",
+            "股票": "股票"
+        }
+
+        self.selected_categories = self._normalize_categories(categories)
+
+    def set_categories(self, categories=None):
+        """更新用户选择的类别"""
+        self.selected_categories = self._normalize_categories(categories)
+
+    def _normalize_categories(self, categories=None):
+        if not categories:
+            return list(self.category_feeds.keys())
+
+        normalized = []
+        for category in categories:
+            if not category:
+                continue
+            key = self.category_alias_map.get(str(category).strip().lower(), category)
+            if key in self.category_feeds and key not in normalized:
+                normalized.append(key)
+        return normalized or list(self.category_feeds.keys())
 
     def fetch_latest(self):
         """从多个RSS源抓取新闻"""
         all_news = []
         successful_sources = 0
-        
-        for url in self.rss_feeds:
-            logger.info(f"Fetching news from {url} ...")
+
+        categories = self.selected_categories or list(self.category_feeds.keys())
+        planned_feeds = []
+        for category in categories:
+            feeds = self.category_feeds.get(category, [])
+            planned_feeds.extend([(category, url) for url in feeds])
+
+        if not planned_feeds:
+            logger.warning("未找到匹配的RSS源，使用所有默认源。")
+            for category, urls in self.category_feeds.items():
+                planned_feeds.extend([(category, url) for url in urls])
+
+        for category, url in planned_feeds:
+            logger.info(f"Fetching {category} news from {url} ...")
             try:
                 # 使用feedparser抓取RSS
                 feed = feedparser.parse(url)
-                
+
                 if not feed.entries:
                     logger.warning(f"No entries found in {url}")
                     continue
-                
+
                 source_news = []
                 for entry in feed.entries:
                     # 标准化数据结构
@@ -49,22 +107,25 @@ class NewsCollector:
                         "link": entry.get("link", "").strip(),
                         "published": entry.get("published", ""),
                         "summary": entry.get("summary", "").strip(),
-                        "source": url  # 添加来源标识
+                        "source": url,  # 添加来源标识
+                        "category": category
                     }
-                    
+
                     # 过滤空标题
                     if item["title"]:
                         source_news.append(item)
-                
+
                 all_news.extend(source_news)
                 successful_sources += 1
-                logger.success(f"✅ 成功从 {url} 获取 {len(source_news)} 条新闻")
-                
+                logger.success(f"✅ 成功从 {url} 获取 {len(source_news)} 条 {category} 类新闻")
+
             except Exception as e:
                 logger.error(f"❌ 从 {url} 抓取失败: {e}")
                 continue
-        
-        logger.info(f"📊 总计从 {successful_sources}/{len(self.rss_feeds)} 个源获取 {len(all_news)} 条新闻")
+
+        logger.info(
+            f"📊 总计从 {successful_sources}/{len(planned_feeds)} 个源获取 {len(all_news)} 条新闻"
+        )
         return all_news
 
     def clean_and_deduplicate(self, news_list):

@@ -159,7 +159,7 @@ class DashboardManager:
             return
         
         # 创建筛选器
-        col1, col2 = st.columns(2)
+        col1, col2, col3 = st.columns(3)
         
         with col1:
             sentiment_filter = st.selectbox(
@@ -169,10 +169,19 @@ class DashboardManager:
             )
         
         with col2:
+            categories = sorted({news.get('category', '') for news in analyzed_news if news.get('category')})
+            category_options = ["全部"] + categories if categories else ["全部"]
+            category_filter = st.selectbox(
+                "类别筛选",
+                category_options,
+                key="category_filter"
+            )
+        
+        with col3:
             sort_by = st.selectbox(
                 "排序方式",
                 ["时间", "情绪得分", "置信度"],
-                key="sort_by"
+                key="news_sort_by"
             )
         
         # 筛选数据
@@ -182,6 +191,9 @@ class DashboardManager:
             sentiment_map = {"积极": "positive", "消极": "negative", "中性": "neutral"}
             filtered_news = [news for news in filtered_news 
                            if news.get('sentiment_label') == sentiment_map[sentiment_filter]]
+        
+        if category_filter != "全部":
+            filtered_news = [news for news in filtered_news if news.get('category') == category_filter]
         
         # 排序数据
         if sort_by == "情绪得分":
@@ -193,7 +205,8 @@ class DashboardManager:
         
         # 显示新闻
         for i, news in enumerate(filtered_news[:max_display]):
-            with st.expander(f"新闻 {i+1}: {news.get('title', '无标题')[:60]}..."):
+            display_title = news.get('original_title') or news.get('title', '无标题')
+            with st.expander(f"新闻 {i+1}: {display_title[:60]}..."):
                 col1, col2, col3 = st.columns(3)
                 
                 with col1:
@@ -210,6 +223,7 @@ class DashboardManager:
                     
                     st.write(f"**情绪得分**: {color} {sentiment_score:.3f}")
                     st.write(f"**情绪标签**: {sentiment_label}")
+                    st.write(f"**类别**: {news.get('category', '未分类') or '未分类'}")
                 
                 with col2:
                     confidence = news.get('sentiment_confidence', 0)
@@ -222,7 +236,7 @@ class DashboardManager:
                         st.write(f"**链接**: [查看原文]({news.get('url')})")
                 
                 # 新闻内容
-                content = news.get('content', '无内容')
+                content = news.get('original_content') or news.get('content', '无内容')
                 if content:
                     st.write("**内容摘要**:")
                     st.write(content[:300] + "..." if len(content) > 300 else content)
@@ -302,7 +316,8 @@ class DashboardManager:
     def render_complete_dashboard(self, sentiment_summary: Dict[str, Any],
                                 trend_summary: Dict[str, Any],
                                 analyzed_news: List[Dict[str, Any]],
-                                trend_data: Dict[str, Any]):
+                                trend_data: Dict[str, Any],
+                                chart_paths: Dict[str, Any]):
         """
         渲染完整仪表盘
         
@@ -311,9 +326,10 @@ class DashboardManager:
             trend_summary: 趋势分析摘要
             analyzed_news: 已分析的新闻数据
             trend_data: 趋势预测数据
+            chart_paths: 已生成的图表文件路径
         """
         # 页面标题
-        st.title("🎯 MarketPulse 智能市场分析仪表盘")
+        st.subheader("🎯 综合分析结果")
         st.markdown("---")
         
         # 情绪分析概览
@@ -334,16 +350,17 @@ class DashboardManager:
         
         # 关键词分析
         self.render_keywords_analysis(analyzed_news)
-        st.markdown("---")
         
-        # 导出功能
-        self.render_export_section(sentiment_summary, trend_summary, analyzed_news)
+        if chart_paths:
+            st.markdown("---")
+            st.caption("图表文件已保存至 results/charts 目录，可用于线下报告或二次分析。")
 
 
 def create_dashboard(sentiment_summary: Dict[str, Any],
                     trend_summary: Dict[str, Any],
                     analyzed_news: List[Dict[str, Any]],
-                    trend_data: Dict[str, Any]):
+                    trend_data: Dict[str, Any],
+                    chart_paths: Dict[str, Any]):
     """
     便捷函数：创建仪表盘
     
@@ -352,8 +369,9 @@ def create_dashboard(sentiment_summary: Dict[str, Any],
         trend_summary: 趋势分析摘要
         analyzed_news: 已分析的新闻数据
         trend_data: 趋势预测数据
+        chart_paths: 已生成的图表文件路径
     """
     dashboard = DashboardManager()
     dashboard.render_complete_dashboard(
-        sentiment_summary, trend_summary, analyzed_news, trend_data
+        sentiment_summary, trend_summary, analyzed_news, trend_data, chart_paths
     )

@@ -293,9 +293,10 @@ class ChartGenerator:
         # 提取所有文本
         all_text = ""
         for news in sentiment_data:
-            title = news.get('title', '')
-            content = news.get('content', '')
-            all_text += f" {title} {content}"
+            title = news.get('original_title') or news.get('title', '')
+            content = news.get('original_content') or news.get('content', '')
+            summary = news.get('original_summary') or news.get('summary', '')
+            all_text += f" {title} {content} {summary}"
         
         # 分词并统计词频
         words = jieba.lcut(all_text)

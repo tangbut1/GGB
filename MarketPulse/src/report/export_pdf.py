@@ -4,26 +4,33 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-import fitz  # PyMuPDF
-
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+from reportlab.lib.units import mm
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+from reportlab.platypus import (
+    Image,
+    ListFlowable,
+    PageBreak,
+    Paragraph,
+    SimpleDocTemplate,
+    Spacer,
+    Table,
+    TableStyle,
+)
 
 ChartPaths = Dict[str, Path]
 
 
 class PDFReportGenerator:
-    """PDF报告生成器，提供多页中文友好的市场分析报告。"""
+    """基于 ReportLab 的 PDF 报告生成器，原生支持中文字体。"""
 
     def __init__(self) -> None:
-        self.page_width = 595  # A4 portrait width in points
-        self.page_height = 842
-        self.margin = 50
-        self.doc: Optional[fitz.Document] = None
-        self.page: Optional[fitz.Page] = None
-        self.current_y: float = self.margin
-        self.font_name: str = "helv"
-        self.heading_sizes = {1: 22, 2: 18, 3: 14}
-        self.body_size = 12
-        self.line_spacing_factor = 1.4
+        self._register_fonts()
+        self.styles = self._build_styles()
+        self.doc: Optional[SimpleDocTemplate] = None
 
     def create_report(
         self,
@@ -35,224 +42,209 @@ class PDFReportGenerator:
         chart_paths: Optional[ChartPaths] = None,
     ) -> str:
         chart_paths = chart_paths or {}
-
-        self.doc = fitz.open()
-        self.font_name = self._load_font(self.doc)
-
-        self._start_new_page()
-        self._render_title_page(sentiment_summary)
-
-        self._start_new_page()
-        self._render_table_of_contents()
-
-        self._start_new_page()
-        self._render_executive_summary(sentiment_summary, trend_summary)
-
-        self._start_new_page()
-        self._render_sentiment_details(sentiment_summary, analyzed_news)
-
-        self._start_new_page()
-        self._render_trend_analysis(trend_summary, trend_data)
-
-        self._start_new_page()
-        self._render_news_details(analyzed_news)
-
-        self._start_new_page()
-        self._render_conclusions(sentiment_summary, trend_summary)
-
-        if chart_paths:
-            self._render_chart_gallery(chart_paths)
-
         output = Path(output_path)
         output.parent.mkdir(parents=True, exist_ok=True)
+
+        self.doc = SimpleDocTemplate(
+            str(output),
+            pagesize=A4,
+            leftMargin=18 * mm,
+            rightMargin=18 * mm,
+            topMargin=20 * mm,
+            bottomMargin=20 * mm,
+        )
+
+        story: List[Any] = []
+        story.extend(self._build_title_page(sentiment_summary))
+        story.append(PageBreak())
+        story.extend(self._build_table_of_contents())
+        story.append(PageBreak())
+        story.extend(self._build_executive_summary(sentiment_summary, trend_summary))
+        story.append(PageBreak())
+        story.extend(self._build_sentiment_details(sentiment_summary, analyzed_news))
+        story.append(PageBreak())
+        story.extend(self._build_trend_analysis(trend_summary, trend_data))
+        story.append(PageBreak())
+        story.extend(self._build_news_details(analyzed_news))
+        story.append(PageBreak())
+        story.extend(self._build_conclusions(sentiment_summary, trend_summary))
+
+        if chart_paths:
+            story.append(PageBreak())
+            story.extend(self._build_chart_gallery(chart_paths))
+
         assert self.doc is not None
-        self.doc.save(str(output))
-        self.doc.close()
+        self.doc.build(story, onFirstPage=self._add_page_number, onLaterPages=self._add_page_number)
         return str(output)
 
     # ------------------------------------------------------------------
-    # Rendering helpers
+    # Internal helpers
     # ------------------------------------------------------------------
-    def _load_font(self, doc: fitz.Document) -> str:
-        """加载支持中文的字体，找不到则回退到默认字体。"""
-        # Windows系统常见中文字体路径
-        candidate_paths = [
-            Path("C:/Windows/Fonts/simsun.ttc"),  # 宋体
-            Path("C:/Windows/Fonts/simhei.ttf"),  # 黑体
-            Path("C:/Windows/Fonts/msyh.ttc"),    # 微软雅黑
-            Path("C:/Windows/Fonts/simkai.ttf"), # 楷体
-            Path("C:/Windows/Fonts/simfang.ttf"), # 仿宋
-            Path(__file__).resolve().parents[2] / "assets" / "fonts" / "NotoSansSC-Regular.otf",
-            Path("/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc"),
-            Path("/usr/share/fonts/truetype/noto/NotoSansSC-Regular.otf"),
-            Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"),
-            Path("/usr/share/fonts/truetype/wqy/wqy-microhei.ttc"),
-        ]
+    def _register_fonts(self) -> None:
+        try:
+            pdfmetrics.registerFont(UnicodeCIDFont("STSong-Light"))
+        except Exception:  # noqa: BLE001
+            pass
 
-        for font_path in candidate_paths:
-            if font_path.exists():
-                try:
-                    # 使用正确的方法加载字体
-                    font_name = doc._insert_font(str(font_path))
-                    print(f"✅ 成功加载字体: {font_path} -> {font_name}")
-                    return font_name
-                except (RuntimeError, AttributeError, TypeError) as e:
-                    print(f"⚠️ 字体加载失败: {font_path} - {e}")
-                    continue
-        
-        print("⚠️ 未找到中文字体，使用默认字体（可能显示乱码）")
-        return "helv"
+    def _build_styles(self):
+        styles = getSampleStyleSheet()
+        target_styles = ["Normal", "BodyText", "Heading1", "Heading2", "Heading3", "Title", "Bullet"]
+        for name in target_styles:
+            if name in styles:
+                styles[name].fontName = "STSong-Light"
+                styles[name].leading = styles[name].fontSize * 1.35
 
-    def _start_new_page(self) -> None:
-        if self.doc is None:
-            raise ValueError("Document not initialised")
-        self.page = self.doc.new_page(width=self.page_width, height=self.page_height)
-        self.current_y = self.margin
-
-    def _ensure_space(self, line_height: float) -> None:
-        if self.current_y + line_height > self.page_height - self.margin:
-            self._start_new_page()
-
-    def _write_text(self, text: str, fontsize: float) -> None:
-        if not text:
-            self.current_y += fontsize * (self.line_spacing_factor / 2)
-            return
-        line_height = fontsize * self.line_spacing_factor
-        self._ensure_space(line_height)
-        assert self.page is not None
-        self.page.insert_text(
-            fitz.Point(self.margin, self.current_y),
-            text,
-            fontsize=fontsize,
-            fontname=self.font_name,
-            color=(0, 0, 0),
-            encoding=0,
+        styles.add(
+            ParagraphStyle(
+                name="Small", parent=styles["Normal"], fontSize=9, leading=11, textColor=colors.grey
+            )
         )
-        self.current_y += line_height
+        styles.add(
+            ParagraphStyle(
+                name="Metric",
+                parent=styles["Heading3"],
+                fontSize=12,
+                leading=15,
+                textColor=colors.HexColor("#0D47A1"),
+            )
+        )
+        styles.add(
+            ParagraphStyle(
+                name="BulletItem",
+                parent=styles["Normal"],
+                leftIndent=10,
+                bulletIndent=0,
+                bulletFontName="STSong-Light",
+            )
+        )
+        return styles
 
-    def _write_paragraph(self, text: str, fontsize: Optional[float] = None) -> None:
-        fontsize = fontsize or self.body_size
-        for line in text.splitlines():
-            self._write_text(line.strip(), fontsize)
-        self.current_y += fontsize * 0.2
+    def _doc_width(self) -> float:
+        assert self.doc is not None
+        return self.doc.width
 
-    def _write_heading(self, text: str, level: int = 1) -> None:
-        fontsize = self.heading_sizes.get(level, self.body_size)
-        self._write_text(text, fontsize)
-        self.current_y += fontsize * 0.2
-
-    def _write_bullet_list(self, items: List[str]) -> None:
-        for item in items:
-            self._write_text(f"• {item}", self.body_size)
-        self.current_y += self.body_size * 0.3
-
-    def _write_key_value(self, pairs: List[tuple[str, str]]) -> None:
-        for key, value in pairs:
-            self._write_text(f"{key}: {value}", self.body_size)
-        self.current_y += self.body_size * 0.3
+    def _add_page_number(self, canvas, doc) -> None:  # type: ignore[override]
+        canvas.saveState()
+        canvas.setFont("STSong-Light", 9)
+        canvas.drawRightString(doc.pagesize[0] - doc.rightMargin, doc.bottomMargin / 2, f"第 {doc.page} 页")
+        canvas.restoreState()
 
     # ------------------------------------------------------------------
-    # Section renderers
+    # Section builders
     # ------------------------------------------------------------------
-    def _render_title_page(self, sentiment_summary: Dict[str, Any]) -> None:
-        assert self.page is not None
-        title_rect = fitz.Rect(self.margin, 200, self.page_width - self.margin, 250)
-        self.page.insert_textbox(
-            title_rect,
-            "MarketPulse 智能市场分析报告",
-            fontsize=28,
-            fontname=self.font_name,
-            align=fitz.TEXT_ALIGN_CENTER,
-            encoding=0,
+    def _build_title_page(self, sentiment_summary: Dict[str, Any]) -> List[Any]:
+        story: List[Any] = []
+        story.append(Spacer(1, 45 * mm))
+        story.append(Paragraph("MarketPulse 智能市场分析报告", self.styles["Title"]))
+        story.append(Spacer(1, 8 * mm))
+        story.append(Paragraph("基于AI的情绪洞察与趋势预测", self.styles["Heading2"]))
+        story.append(Spacer(1, 25 * mm))
+        story.append(
+            Paragraph(
+                f"报告生成时间：{datetime.now().strftime('%Y年%m月%d日 %H:%M')}",
+                self.styles["Normal"],
+            )
         )
+        story.append(Spacer(1, 20 * mm))
 
-        subtitle_rect = fitz.Rect(self.margin, 270, self.page_width - self.margin, 310)
-        self.page.insert_textbox(
-            subtitle_rect,
-            "基于AI的情绪洞察与趋势预测",
-            fontsize=18,
-            fontname=self.font_name,
-            align=fitz.TEXT_ALIGN_CENTER,
-            encoding=0,
-        )
-
-        current_time = datetime.now().strftime("%Y年%m月%d日 %H:%M")
-        time_rect = fitz.Rect(self.margin, 330, self.page_width - self.margin, 360)
-        self.page.insert_textbox(
-            time_rect,
-            f"报告生成时间：{current_time}",
-            fontsize=12,
-            fontname=self.font_name,
-            align=fitz.TEXT_ALIGN_CENTER,
-            encoding=0,
-        )
-
-        self.current_y = 420
-        self._write_heading("关键指标概览", level=2)
-        pairs = [
-            ("总新闻数", str(sentiment_summary.get("total_news", 0))),
-            ("积极新闻", str(sentiment_summary.get("positive_count", 0))),
-            ("消极新闻", str(sentiment_summary.get("negative_count", 0))),
-            ("平均情绪得分", f"{sentiment_summary.get('avg_sentiment', 0):.3f}"),
+        data = [
+            ["总新闻数", str(sentiment_summary.get("total_news", 0))],
+            ["积极新闻", str(sentiment_summary.get("positive_count", 0))],
+            ["消极新闻", str(sentiment_summary.get("negative_count", 0))],
+            ["平均情绪得分", f"{sentiment_summary.get('avg_sentiment', 0):.3f}"],
         ]
-        self._write_key_value(pairs)
+        table = Table(data, colWidths=[50 * mm, 40 * mm])
+        table.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#E3F2FD")),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#0D47A1")),
+                    ("FONTNAME", (0, 0), (-1, -1), "STSong-Light"),
+                    ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                    ("GRID", (0, 0), (-1, -1), 0.25, colors.grey),
+                    ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F7FBFF")]),
+                ]
+            )
+        )
+        story.append(table)
+        return story
 
-    def _render_table_of_contents(self) -> None:
-        self._write_heading("目录", level=1)
-        entries = [
-            "1. 执行摘要",
-            "2. 情绪分析详情",
-            "3. 趋势预测分析",
-            "4. 新闻详情分析",
-            "5. 结论与建议",
-            "6. 图表合集",
+    def _build_table_of_contents(self) -> List[Any]:
+        story: List[Any] = []
+        story.append(Paragraph("目录", self.styles["Heading1"]))
+        story.append(Spacer(1, 6 * mm))
+        items = [
+            Paragraph("1. 执行摘要", self.styles["Normal"]),
+            Paragraph("2. 情绪分析详情", self.styles["Normal"]),
+            Paragraph("3. 趋势预测分析", self.styles["Normal"]),
+            Paragraph("4. 新闻详情分析", self.styles["Normal"]),
+            Paragraph("5. 结论与建议", self.styles["Normal"]),
+            Paragraph("6. 图表合集", self.styles["Normal"]),
         ]
-        self._write_bullet_list(entries)
+        story.append(ListFlowable(items, bulletType="1", start="1"))
+        return story
 
-    def _render_executive_summary(
+    def _build_executive_summary(
         self,
         sentiment_summary: Dict[str, Any],
         trend_summary: Dict[str, Any],
-    ) -> None:
-        self._write_heading("1. 执行摘要", level=1)
+    ) -> List[Any]:
+        story: List[Any] = []
+        story.append(Paragraph("1. 执行摘要", self.styles["Heading1"]))
+        story.append(Spacer(1, 4 * mm))
+
         total_news = sentiment_summary.get("total_news", 0)
         positive = sentiment_summary.get("positive_count", 0)
         negative = sentiment_summary.get("negative_count", 0)
         avg_sentiment = sentiment_summary.get("avg_sentiment", 0.0)
 
-        summary_text = (
-            f"本次报告对 {total_news} 条新闻信息进行了清洗与多模型情绪分析，"
-            f"识别出积极新闻 {positive} 条、消极新闻 {negative} 条，"
-            f"整体市场情绪得分为 {avg_sentiment:.3f}。"
+        overview = (
+            f"本次分析共处理 {total_news} 条新闻，识别出积极新闻 {positive} 条、"
+            f"消极新闻 {negative} 条，整体情绪得分为 {avg_sentiment:.3f}。"
         )
-        self._write_paragraph(summary_text)
+        story.append(Paragraph(overview, self.styles["BodyText"]))
+        story.append(Spacer(1, 2 * mm))
 
         if trend_summary.get("status") == "success":
             trend_direction = trend_summary.get("trend_direction", "neutral")
-            confidence = trend_summary.get("confidence", 0)
-            trend_text = (
-                f"基于Prophet模型的趋势预测显示，未来市场情绪呈现 {trend_direction} 趋势，"
-                f"预测置信度为 {confidence:.1%}。"
+            confidence = trend_summary.get("confidence", 0.0)
+            summary = (
+                f"基于时间序列模型的预测结果显示，市场情绪呈 {trend_direction} 走势，"
+                f"预测置信度约为 {confidence:.1%}。"
             )
-            self._write_paragraph(trend_text)
+            story.append(Paragraph(summary, self.styles["BodyText"]))
         elif trend_summary.get("message"):
-            self._write_paragraph(f"趋势预测未成功：{trend_summary['message']}")
+            story.append(Paragraph(f"趋势预测未能完成：{trend_summary['message']}", self.styles["BodyText"]))
 
-    def _render_sentiment_details(
+        return story
+
+    def _build_sentiment_details(
         self,
         sentiment_summary: Dict[str, Any],
         analyzed_news: List[Dict[str, Any]],
-    ) -> None:
-        self._write_heading("2. 情绪分析详情", level=1)
-        dist = sentiment_summary.get("sentiment_distribution", {})
-        total = sentiment_summary.get("total_news", 1) or 1
+    ) -> List[Any]:
+        story: List[Any] = []
+        story.append(Paragraph("2. 情绪分析详情", self.styles["Heading1"]))
+        story.append(Spacer(1, 4 * mm))
 
-        distribution_lines = [
-            f"积极新闻：{dist.get('positive', 0)} 条，占比 {dist.get('positive', 0) / total * 100:.1f}%",
-            f"消极新闻：{dist.get('negative', 0)} 条，占比 {dist.get('negative', 0) / total * 100:.1f}%",
-            f"中性新闻：{dist.get('neutral', 0)} 条，占比 {dist.get('neutral', 0) / total * 100:.1f}%",
+        distribution = sentiment_summary.get("sentiment_distribution", {})
+        total = max(sentiment_summary.get("total_news", 1), 1)
+        lines = [
+            Paragraph(
+                f"积极新闻：{distribution.get('positive', 0)} 条，占比 {distribution.get('positive', 0) / total * 100:.1f}%",
+                self.styles["Normal"],
+            ),
+            Paragraph(
+                f"消极新闻：{distribution.get('negative', 0)} 条，占比 {distribution.get('negative', 0) / total * 100:.1f}%",
+                self.styles["Normal"],
+            ),
+            Paragraph(
+                f"中性新闻：{distribution.get('neutral', 0)} 条，占比 {distribution.get('neutral', 0) / total * 100:.1f}%",
+                self.styles["Normal"],
+            ),
         ]
-        self._write_bullet_list(distribution_lines)
+        story.append(ListFlowable(lines, bulletType="bullet"))
+        story.append(Spacer(1, 3 * mm))
 
         avg_sentiment = sentiment_summary.get("avg_sentiment", 0.0)
         if avg_sentiment > 0.1:
@@ -261,23 +253,32 @@ class PDFReportGenerator:
             insight = "市场情绪整体偏消极，投资者风险偏好下降。"
         else:
             insight = "市场情绪相对中性，投资者以观望为主。"
-        self._write_paragraph(f"情绪解读：{insight}")
+        story.append(Paragraph(insight, self.styles["BodyText"]))
 
-        ai_scores = [n.get("ai_sentiment_score") for n in analyzed_news if n.get("ai_sentiment_score") is not None]
+        ai_scores = [item.get("ai_sentiment_score") for item in analyzed_news if item.get("ai_sentiment_score") is not None]
         if ai_scores:
-            avg_ai = sum(ai_scores) / len(ai_scores)
-            self._write_paragraph(f"AI增强分析平均情绪得分：{avg_ai:.3f}（覆盖 {len(ai_scores)} 条文本）")
+            ai_avg = sum(ai_scores) / len(ai_scores)
+            story.append(
+                Paragraph(
+                    f"AI 模型辅助评分覆盖 {len(ai_scores)} 条文本，平均情绪得分 {ai_avg:.3f}。",
+                    self.styles["BodyText"],
+                )
+            )
+        return story
 
-    def _render_trend_analysis(
+    def _build_trend_analysis(
         self,
         trend_summary: Dict[str, Any],
         trend_data: Dict[str, Any],
-    ) -> None:
-        self._write_heading("3. 趋势预测分析", level=1)
+    ) -> List[Any]:
+        story: List[Any] = []
+        story.append(Paragraph("3. 趋势预测分析", self.styles["Heading1"]))
+        story.append(Spacer(1, 4 * mm))
+
         if trend_summary.get("status") != "success":
             message = trend_summary.get("message", "数据量不足，无法完成趋势预测。")
-            self._write_paragraph(message)
-            return
+            story.append(Paragraph(message, self.styles["BodyText"]))
+            return story
 
         direction = trend_summary.get("trend_direction", "neutral")
         confidence = trend_summary.get("confidence", 0.0)
@@ -285,68 +286,87 @@ class PDFReportGenerator:
         forecast_periods = trend_summary.get("forecast_periods", 0)
 
         items = [
-            f"趋势方向：{direction}",
-            f"预测置信度：{confidence:.1%}",
-            f"训练数据点：{data_points}",
-            f"预测天数：{forecast_periods}",
+            Paragraph(f"趋势方向：{direction}", self.styles["Normal"]),
+            Paragraph(f"预测置信度：{confidence:.1%}", self.styles["Normal"]),
+            Paragraph(f"训练数据点：{data_points}", self.styles["Normal"]),
+            Paragraph(f"预测天数：{forecast_periods}", self.styles["Normal"]),
         ]
-        self._write_bullet_list(items)
+        story.append(ListFlowable(items, bulletType="bullet"))
+        story.append(Spacer(1, 3 * mm))
 
         recommendation = trend_summary.get("recommendation")
         if recommendation:
-            self._write_paragraph(f"投资建议：{recommendation}")
+            story.append(Paragraph(f"投资建议：{recommendation}", self.styles["BodyText"]))
 
-        predictions = trend_data.get("predictions", []) if isinstance(trend_data, dict) else []
+        predictions = []
+        if isinstance(trend_data, dict):
+            predictions = trend_data.get("predictions", []) or trend_data.get("forecast", [])
         if predictions:
-            last_prediction = predictions[-1]
-            value = last_prediction.get("yhat", 0)
-            self._write_paragraph(f"最新预测情绪得分：{value:.3f}")
+            latest = predictions[-1]
+            value = latest.get("yhat") or latest.get("value")
+            if value is not None:
+                story.append(Paragraph(f"最新预测情绪得分：{float(value):.3f}", self.styles["BodyText"]))
 
-    def _render_news_details(self, analyzed_news: List[Dict[str, Any]]) -> None:
-        self._write_heading("4. 新闻详情分析", level=1)
+        return story
+
+    def _build_news_details(self, analyzed_news: List[Dict[str, Any]]) -> List[Any]:
+        story: List[Any] = []
+        story.append(Paragraph("4. 新闻详情分析", self.styles["Heading1"]))
+        story.append(Spacer(1, 4 * mm))
+
         if not analyzed_news:
-            self._write_paragraph("暂无新闻详情数据。")
-            return
+            story.append(Paragraph("暂无新闻数据。", self.styles["BodyText"]))
+            return story
 
-        important_news = sorted(
+        top_news = sorted(
             analyzed_news,
-            key=lambda item: abs(item.get("sentiment_score", 0)),
+            key=lambda item: abs(item.get("sentiment_score", 0.0)),
             reverse=True,
         )[:10]
 
-        for idx, news in enumerate(important_news, start=1):
-            title = news.get("original_title") or news.get("title", "无标题")
+        for idx, news in enumerate(top_news, start=1):
+            title = news.get("original_title") or news.get("title") or "无标题"
+            story.append(Paragraph(f"4.{idx} {title}", self.styles["Heading3"]))
+
             score = news.get("sentiment_score", 0.0)
             label = news.get("sentiment_label", "neutral")
             confidence = news.get("sentiment_confidence", 0.0)
             publish_time = news.get("publish_time", "未知")
             category = news.get("category", "未分类") or "未分类"
 
-            self._write_heading(f"4.{idx} {title}", level=3)
-            details = [
-                f"情绪得分：{score:.3f}（{label}）",
-                f"情绪置信度：{confidence:.3f}",
-                f"发布时间：{publish_time}",
-                f"所属类别：{category}",
-                f"来源：{news.get('source', '未知')}",
+            bullet_items = [
+                Paragraph(f"情绪得分：{score:.3f}（{label}）", self.styles["BulletItem"]),
+                Paragraph(f"情绪置信度：{confidence:.3f}", self.styles["BulletItem"]),
+                Paragraph(f"发布时间：{publish_time}", self.styles["BulletItem"]),
+                Paragraph(f"所属类别：{category}", self.styles["BulletItem"]),
+                Paragraph(f"来源：{news.get('source', '未知')}", self.styles["BulletItem"]),
             ]
-            self._write_bullet_list(details)
+            story.append(ListFlowable(bullet_items, bulletType="bullet"))
 
-            summary = news.get("original_summary") or news.get("summary", "")
+            summary = news.get("original_summary") or news.get("summary") or news.get("content", "")
             if summary:
-                self._write_paragraph(f"摘要：{summary[:200]}{'...' if len(summary) > 200 else ''}")
+                trimmed = summary[:400] + ("..." if len(summary) > 400 else "")
+                story.append(Paragraph(trimmed, self.styles["BodyText"]))
+            story.append(Spacer(1, 2 * mm))
 
-    def _render_conclusions(
+        return story
+
+    def _build_conclusions(
         self,
         sentiment_summary: Dict[str, Any],
         trend_summary: Dict[str, Any],
-    ) -> None:
-        self._write_heading("5. 结论与建议", level=1)
+    ) -> List[Any]:
+        story: List[Any] = []
+        story.append(Paragraph("5. 结论与建议", self.styles["Heading1"]))
+        story.append(Spacer(1, 4 * mm))
+
         avg_sentiment = sentiment_summary.get("avg_sentiment", 0.0)
         total_news = sentiment_summary.get("total_news", 0)
-
-        self._write_paragraph(
-            f"综合 {total_news} 条新闻的情绪分析，当前市场情绪得分为 {avg_sentiment:.3f}。"
+        story.append(
+            Paragraph(
+                f"综合 {total_news} 条新闻的情绪分析，当前市场情绪得分为 {avg_sentiment:.3f}。",
+                self.styles["BodyText"],
+            )
         )
 
         if trend_summary.get("status") == "success":
@@ -357,13 +377,21 @@ class PDFReportGenerator:
                 advice = "情绪趋于下行，建议保持谨慎并控制仓位。"
             else:
                 advice = "情绪稳定，建议耐心等待新的市场信号。"
-            self._write_paragraph(f"投资建议：{advice}")
+            story.append(Paragraph(f"投资建议：{advice}", self.styles["BodyText"]))
 
-        self._write_paragraph(
-            "风险提示：本报告基于历史数据和模型预测，仅供参考，不构成投资建议。投资有风险，决策需谨慎。"
+        story.append(
+            Paragraph(
+                "风险提示：本报告基于历史数据和模型预测，仅供参考，不构成投资建议。",
+                self.styles["BodyText"],
+            )
         )
+        return story
 
-    def _render_chart_gallery(self, chart_paths: ChartPaths) -> None:
+    def _build_chart_gallery(self, chart_paths: ChartPaths) -> List[Any]:
+        story: List[Any] = []
+        story.append(Paragraph("6. 图表合集", self.styles["Heading1"]))
+        story.append(Spacer(1, 4 * mm))
+
         chart_titles = {
             "sentiment_distribution": "情绪分布图",
             "sentiment_timeline": "情绪时间线",
@@ -371,32 +399,20 @@ class PDFReportGenerator:
             "sentiment_heatmap": "情绪热力图",
         }
 
-        for key, path in chart_paths.items():
-            chart_file = Path(path)
-            if not chart_file.exists():
+        for key, chart_path in chart_paths.items():
+            path = Path(chart_path)
+            if not path.exists():
                 continue
 
-            self._start_new_page()
-            title = chart_titles.get(key, chart_file.stem)
-            self._write_heading(f"6. {title}", level=1)
+            story.append(Paragraph(chart_titles.get(key, path.stem), self.styles["Heading3"]))
+            story.append(Spacer(1, 2 * mm))
 
-            available_height = self.page_height - self.margin - self.current_y
-            image_height = available_height
-            image_width = self.page_width - 2 * self.margin
-            if available_height <= 0:
-                self._start_new_page()
-                image_height = self.page_height - 2 * self.margin
-                image_width = self.page_width - 2 * self.margin
+            img = Image(str(path))
+            img._restrictSize(self._doc_width(), A4[1] - 60 * mm)
+            story.append(img)
+            story.append(Spacer(1, 6 * mm))
 
-            rect = fitz.Rect(
-                self.margin,
-                self.current_y,
-                self.margin + image_width,
-                self.current_y + image_height,
-            )
-            assert self.page is not None
-            self.page.insert_image(rect, filename=str(chart_file), keep_proportion=True)
-            self.current_y = rect.br.y + self.body_size
+        return story
 
 
 def generate_pdf_report(

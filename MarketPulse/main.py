@@ -92,7 +92,8 @@ def build_ai_client(ai_config: Optional[Dict[str, Any]]) -> AIClient:
         provider=provider,
         model=ai_config.get("model"),
         api_key=ai_config.get("api_key"),
-        endpoint=ai_config.get("endpoint")
+        endpoint=ai_config.get("endpoint"),
+        generation_model=ai_config.get("generation_model")
     )
 
 
@@ -221,13 +222,22 @@ def run_pipeline(data_source: str,
                 st.warning(f"AI分析失败：{exc}")
 
     ai_summary: Dict[str, Any] = {}
+    base_model = (ai_client.model or ai_client.provider) if ai_client.provider != "none" else None
+    if base_model:
+        ai_summary["model"] = base_model
+    if ai_client.provider == "huggingface" and ai_client.generation_model:
+        ai_summary["generation_model"] = ai_client.generation_model
     if ai_scores:
-        ai_summary = {
+        ai_summary.update({
             "average": sum(ai_scores) / len(ai_scores),
             "maximum": max(ai_scores),
             "minimum": min(ai_scores),
-            "model": ai_client.model or ai_client.provider
-        }
+        })
+
+    if ai_client.provider != "none":
+        insights = ai_client.generate_insights(sentiment_summary, trend_summary)
+        if insights:
+            ai_summary.update(insights)
 
     # 6️⃣ 生成图表资源
     chart_paths = generate_chart_assets(analyzed_news, trend_results)
@@ -257,10 +267,30 @@ def render_ai_summary(ai_summary: Optional[Dict[str, Any]]) -> None:
     st.markdown("---")
     st.subheader("🧠 AI增强分析摘要")
     col1, col2, col3, col4 = st.columns(4)
-    col1.metric("平均情绪", f"{ai_summary.get('average', 0):.3f}")
-    col2.metric("最高情绪", f"{ai_summary.get('maximum', 0):.3f}")
-    col3.metric("最低情绪", f"{ai_summary.get('minimum', 0):.3f}")
-    col4.metric("使用模型", ai_summary.get("model", "-"))
+
+    avg = ai_summary.get('average')
+    max_score = ai_summary.get('maximum')
+    min_score = ai_summary.get('minimum')
+    model_name = ai_summary.get("model", "-")
+
+    col1.metric("平均情绪", f"{avg:.3f}" if isinstance(avg, (int, float)) else "-")
+    col2.metric("最高情绪", f"{max_score:.3f}" if isinstance(max_score, (int, float)) else "-")
+    col3.metric("最低情绪", f"{min_score:.3f}" if isinstance(min_score, (int, float)) else "-")
+    col4.metric("使用模型", model_name)
+
+    if ai_summary.get("generation_model"):
+        st.caption(f"生成模型：{ai_summary['generation_model']}")
+
+    analysis_text = ai_summary.get("analysis_commentary")
+    trend_text = ai_summary.get("trend_commentary")
+
+    if analysis_text:
+        st.markdown("**AI 情绪解读**")
+        st.write(analysis_text)
+
+    if trend_text:
+        st.markdown("**AI 趋势点评**")
+        st.write(trend_text)
 
 
 def render_local_preview(preview_df: Optional[pd.DataFrame]) -> None:
@@ -376,6 +406,7 @@ def main():
     state.setdefault("data_source", "online")
     state.setdefault("ai_provider", "auto")
     state.setdefault("ai_model", cfg.get("ai", {}).get("openai_model", ""))
+    state.setdefault("ai_generation_model", cfg.get("ai", {}).get("hf_generation_model", ""))
     state.setdefault("ai_endpoint", "")
     state.setdefault("ai_api_key", "")
     state.setdefault("generated_pdf_path", "")
@@ -407,13 +438,11 @@ def main():
                 "选择新闻类别",
                 category_options,
                 default=state.get("selected_categories", DEFAULT_CATEGORIES),
-                help="选择要采集的新闻类别"
+                help="选择要采集的新闻类别",
+                key="category_selector"
             )
-            if not selected_categories:
-                st.warning("至少选择一个类别，已默认选择全部。")
-                selected_categories = DEFAULT_CATEGORIES
         else:
-            selected_categories = DEFAULT_CATEGORIES  # 其他数据源使用默认类别
+            selected_categories = state.get("selected_categories", DEFAULT_CATEGORIES)
 
         # 根据数据源显示不同的配置选项
         custom_keyword = None
@@ -432,7 +461,7 @@ def main():
             if not custom_keyword:
                 st.warning("⚠️ 请输入搜索关键词")
             else:
-                st.success(f"✅ 将搜索关键词: {custom_keyword}")
+                st.caption(f"当前搜索关键词：{custom_keyword}")
                 
         elif data_source == "local":
             st.markdown("#### 📁 本地数据配置")
@@ -493,28 +522,44 @@ def main():
         )
         ai_provider = AI_PROVIDER_CHOICES[ai_provider_label]
 
-        ai_model = state.get("ai_model") or cfg.get("ai", {}).get(
-            "openai_model" if ai_provider == "openai" else "hf_model", ""
-        )
+        previous_provider = state.get("ai_provider", "auto")
         ai_endpoint = state.get("ai_endpoint", "")
         ai_api_key = state.get("ai_api_key", "")
 
-        if ai_provider in {"openai", "huggingface"}:
-            default_model = cfg.get("ai", {}).get(
-                "openai_model" if ai_provider == "openai" else "hf_model", ""
-            )
-            ai_model = st.text_input("模型名称", value=ai_model or default_model, key="ai_model_input")
-
         if ai_provider == "openai":
-            ai_api_key = st.text_input("OpenAI API Key", value=ai_api_key, type="password", key="ai_api_key_input")
-            ai_endpoint = st.text_input("API 接口地址 (可选)", value=ai_endpoint, key="ai_endpoint_input")
+            ai_model = state.get("ai_model") or cfg.get("ai", {}).get("openai_model", "")
+            ai_generation_model = ""
+            ai_model = st.text_input("模型名称", value=ai_model, key="ai_openai_model_input")
+            ai_api_key = st.text_input("OpenAI API Key", value=ai_api_key, type="password", key="ai_openai_key_input")
+            ai_endpoint = st.text_input("API 接口地址 (可选)", value=ai_endpoint, key="ai_openai_endpoint_input")
         elif ai_provider == "huggingface":
-            ai_api_key = st.text_input("HuggingFace Token (可选)", value=ai_api_key, type="password", key="ai_api_key_input")
-            ai_endpoint = st.text_input("推理端点 (可选)", value=ai_endpoint, key="ai_endpoint_input")
+            default_model = cfg.get("ai", {}).get("hf_model", "")
+            default_generation = cfg.get("ai", {}).get("hf_generation_model", "")
+            if previous_provider == "huggingface" and "ai_model" in state:
+                ai_model = state.get("ai_model")
+            else:
+                ai_model = default_model
+            if previous_provider == "huggingface" and "ai_generation_model" in state:
+                ai_generation_model = state.get("ai_generation_model")
+            else:
+                ai_generation_model = default_generation
+            ai_model = st.text_input("情绪分类模型", value=ai_model, key="ai_hf_model_input")
+            ai_generation_model = st.text_input(
+                "生成模型 (用于AI洞察，可选)",
+                value=ai_generation_model,
+                key="ai_hf_generation_model_input"
+            )
+            ai_api_key = st.text_input("HuggingFace Token (可选)", value=ai_api_key, type="password", key="ai_hf_key_input")
+            ai_endpoint = st.text_input("推理端点 (可选)", value=ai_endpoint, key="ai_hf_endpoint_input")
         elif ai_provider == "custom":
-            ai_endpoint = st.text_input("自定义接口地址", value=ai_endpoint, key="ai_endpoint_input")
-            ai_api_key = st.text_input("接口密钥 (可选)", value=ai_api_key, type="password", key="ai_api_key_input")
-            ai_model = st.text_input("模型标识 (可选)", value=ai_model, key="ai_model_input_custom")
+            ai_model = state.get("ai_model") or ""
+            ai_generation_model = state.get("ai_generation_model") or ""
+            ai_endpoint = st.text_input("自定义接口地址", value=ai_endpoint, key="ai_custom_endpoint_input")
+            ai_api_key = st.text_input("接口密钥 (可选)", value=ai_api_key, type="password", key="ai_custom_key_input")
+            ai_model = st.text_input("模型标识 (可选)", value=ai_model, key="ai_custom_model_input")
+        else:
+            ai_model = state.get("ai_model") or ""
+            ai_generation_model = state.get("ai_generation_model") or ""
 
         st.markdown("---")
         st.caption("提示：若选择自动检测或禁用AI，将使用默认设置或跳过AI分析。")
@@ -523,12 +568,15 @@ def main():
     state["selected_categories"] = selected_categories
     state["ai_provider"] = ai_provider
     state["ai_model"] = ai_model
+    state["ai_generation_model"] = ai_generation_model
     state["ai_endpoint"] = ai_endpoint
     state["ai_api_key"] = ai_api_key
 
     ai_config: Dict[str, Any] = {"provider": ai_provider}
     if ai_provider in {"openai", "huggingface"} and ai_model:
         ai_config["model"] = ai_model
+    if ai_provider == "huggingface" and ai_generation_model:
+        ai_config["generation_model"] = ai_generation_model
     if ai_provider in {"openai", "huggingface", "custom"} and ai_api_key:
         ai_config["api_key"] = ai_api_key
     if ai_provider in {"openai", "huggingface", "custom"} and ai_endpoint:

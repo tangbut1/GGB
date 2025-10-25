@@ -1,0 +1,61 @@
+{
+  "summary": {
+    "total_news": 3,
+    "positive_count": 3,
+    "negative_count": 0,
+    "neutral_count": 0,
+    "avg_sentiment": 0.345,
+    "sentiment_distribution": {
+      "positive": 3,
+      "negative": 0,
+      "neutral": 0
+    }
+  },
+  "detailed_results": [
+    {
+      "title": "人工智能 相关 新闻 动态分析",
+      "content": "",
+      "summary": "关于 人工智能 最新 市场动态 发展趋势 分析",
+      "url": "https://example.com/news1",
+      "publish_time": "2024-10-24",
+      "source": "示例数据源",
+      "category": "自定义搜索",
+      "original_title": "人工智能相关新闻：市场动态分析",
+      "original_summary": "关于人工智能的最新市场动态和发展趋势分析。",
+      "original_content": "",
+      "sentiment_score": 0.333,
+      "sentiment_confidence": 0.529,
+      "sentiment_label": "positive"
+    },
+    {
+      "title": "人工智能 行业 报告 机会 分析",
+      "content": "",
+      "summary": "深入分析 人工智能 行业 机会 风险 因素",
+      "url": "https://example.com/news2",
+      "publish_time": "2024-10-24",
+      "source": "示例数据源",
+      "category": "自定义搜索",
+      "original_title": "人工智能行业报告：投资机会分析",
+      "original_summary": "深入分析人工智能行业的投资机会和风险因素。",
+      "original_content": "",
+      "sentiment_score": 0.318,
+      "sentiment_confidence": 0.518,
+      "sentiment_label": "positive"
+    },
+    {
+      "title": "人工智能 技术 发展 创新 突破",
+      "content": "",
+      "summary": "人工智能 领域 技术创新 突破性 进展",
+      "url": "https://example.com/news3",
+      "publish_time": "2024-10-24",
+      "source": "示例数据源",
+      "category": "自定义搜索",
+      "original_title": "人工智能技术发展：创新突破",
+      "original_summary": "人工智能领域的技术创新和突破性进展。",
+      "original_content": "",
+      "sentiment_score": 0.383,
+      "sentiment_confidence": 0.56,
+      "sentiment_label": "positive"
+    }
+  ]
+}

@@ -1,0 +1,22 @@
+app:
+  title: "MarketPulse 智能市场分析"
+  theme: "light"
+
+data:
+  raw_path: "data/raw/raw_news.json"
+  processed_dir: "data/processed"
+  results_dir: "results"
+
+ai:
+  provider: "auto"  # auto | openai | meta | huggingface | none
+  openai_model: "gpt-4o-mini"
+  hf_model: "distilbert-base-uncased-finetuned-sst-2-english"
+
+analysis:
+  use_prophet: true
+  forecast_periods: 30
+
+report:
+  enable_pdf: true
+  enable_docx: true
+

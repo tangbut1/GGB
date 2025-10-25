@@ -10,7 +10,8 @@ data:
 ai:
   provider: "auto"  # auto | openai | meta | huggingface | none
   openai_model: "gpt-4o-mini"
-  hf_model: "distilbert-base-uncased-finetuned-sst-2-english"
+  hf_model: "voidful/albert_chinese_small_sentiment"
+  hf_generation_model: "uer/gpt2-chinese-cluecorpussmall"
 
 analysis:
   use_prophet: true

@@ -73,9 +73,11 @@ def deduplicate_news(news_list: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     unique: Dict[str, Dict[str, Any]] = {}
     for item in news_list:
         title = str(item.get("title") or item.get("original_title") or "").strip()
-        if not title:
+        link = str(item.get("link") or item.get("url") or "").strip()
+        source = str(item.get("source") or "").strip().lower()
+        if not title and not link:
             continue
-        key = title.lower()
+        key = link.lower() if link else f"{title.lower()}::{source}"
         if key not in unique:
             unique[key] = item
     return list(unique.values())
@@ -132,7 +134,7 @@ def run_pipeline(data_source: str,
     if data_source == "custom" and custom_keyword:
         with st.spinner(f"正在搜索关键词: {custom_keyword}..."):
             custom_collector = CustomSearchCollector()
-            custom_news = custom_collector.run_custom_search(custom_keyword, max_results=80)
+            custom_news = custom_collector.run_custom_search(custom_keyword, max_results=150)
             if custom_news:
                 st.success(f"✅ 已搜索到 {len(custom_news)} 条相关新闻！")
                 aggregated_news.extend(custom_news)
@@ -144,7 +146,7 @@ def run_pipeline(data_source: str,
         if custom_keyword:
             with st.spinner(f"正在搜索关键词: {custom_keyword}..."):
                 custom_collector = CustomSearchCollector()
-                custom_news = custom_collector.run_custom_search(custom_keyword, max_results=80)
+                custom_news = custom_collector.run_custom_search(custom_keyword, max_results=150)
                 if custom_news:
                     st.success(f"✅ 已搜索到 {len(custom_news)} 条相关新闻！")
                     aggregated_news.extend(custom_news)
@@ -170,6 +172,9 @@ def run_pipeline(data_source: str,
         st.warning("⚠️ 未检测到本地数据，请先上传表格或选择在线采集。")
 
     aggregated_news = deduplicate_news(aggregated_news)
+
+    if len(aggregated_news) < 100:
+        st.warning(f"当前仅获取 {len(aggregated_news)} 条新闻，为提高分析可靠性建议扩展数据来源或更换关键词。")
 
     if not aggregated_news:
         st.error("❌ 没有可用的数据，终止分析流程。")
@@ -507,7 +512,7 @@ def main():
                 
         elif data_source == "online":
             st.markdown("#### 🌐 在线数据配置")
-            st.caption("系统将从RSS源采集最新7天内的新闻数据")
+            st.caption("系统将从RSS源采集最近3天的新闻数据（目标不少于100条）")
             st.info("✅ 将采集科技、金融、国际、股票类别的新闻")
 
         ai_labels = list(AI_PROVIDER_CHOICES.keys())
@@ -525,6 +530,11 @@ def main():
         previous_provider = state.get("ai_provider", "auto")
         ai_endpoint = state.get("ai_endpoint", "")
         ai_api_key = state.get("ai_api_key", "")
+
+        if ai_provider == "auto":
+            st.caption("自动检测会按 OpenAI → Meta → HuggingFace 的顺序读取环境变量，自动配置可用模型，无需手动输入。")
+        elif ai_provider == "none":
+            st.caption("已禁用AI增强分析，系统仅使用规则模型进行情绪与趋势解读。")
 
         if ai_provider == "openai":
             ai_model = state.get("ai_model") or cfg.get("ai", {}).get("openai_model", "")
@@ -554,9 +564,37 @@ def main():
         elif ai_provider == "custom":
             ai_model = state.get("ai_model") or ""
             ai_generation_model = state.get("ai_generation_model") or ""
-            ai_endpoint = st.text_input("自定义接口地址", value=ai_endpoint, key="ai_custom_endpoint_input")
-            ai_api_key = st.text_input("接口密钥 (可选)", value=ai_api_key, type="password", key="ai_custom_key_input")
-            ai_model = st.text_input("模型标识 (可选)", value=ai_model, key="ai_custom_model_input")
+            st.markdown("#### 🛠️ 自定义接口配置")
+            st.caption(
+                "请输入第三方或自建模型的调用信息：通常需要 API 密钥、模型调用地址和模型名称。"
+                " 系统会以 POST 方式发送 JSON 请求，字段 texts 为待分析的新闻列表。"
+            )
+            ai_api_key = st.text_input(
+                "API 密钥",
+                value=ai_api_key,
+                type="password",
+                key="ai_custom_key_input",
+                placeholder="例如：sk-xxxxxxxxxxxxxxxx"
+            )
+            ai_endpoint = st.text_input(
+                "模型调用地址",
+                value=ai_endpoint,
+                key="ai_custom_endpoint_input",
+                placeholder="https://example.com/v1/sentiment"
+            )
+            ai_model = st.text_input(
+                "模型名称 / 标识",
+                value=ai_model,
+                key="ai_custom_model_input",
+                placeholder="例如：sentiment-large"
+            )
+            ai_generation_model = st.text_input(
+                "洞察生成模型（可选）",
+                value=ai_generation_model,
+                key="ai_custom_generation_model_input",
+                placeholder="用于生成市场解读的模型，如另一个聊天模型"
+            )
+            st.caption("提示：接口需返回与输入 texts 数量一致的情绪得分列表，范围建议为 [-1, 1]。")
         else:
             ai_model = state.get("ai_model") or ""
             ai_generation_model = state.get("ai_generation_model") or ""
@@ -573,9 +611,9 @@ def main():
     state["ai_api_key"] = ai_api_key
 
     ai_config: Dict[str, Any] = {"provider": ai_provider}
-    if ai_provider in {"openai", "huggingface"} and ai_model:
+    if ai_provider in {"openai", "huggingface", "custom"} and ai_model:
         ai_config["model"] = ai_model
-    if ai_provider == "huggingface" and ai_generation_model:
+    if ai_provider in {"huggingface", "custom"} and ai_generation_model:
         ai_config["generation_model"] = ai_generation_model
     if ai_provider in {"openai", "huggingface", "custom"} and ai_api_key:
         ai_config["api_key"] = ai_api_key

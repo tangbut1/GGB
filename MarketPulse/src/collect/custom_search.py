@@ -37,6 +37,7 @@ class CustomSearchCollector:
         self.data_dir.mkdir(exist_ok=True)
         self.cutoff_date = datetime.now() - timedelta(days=3)
         self.max_workers = max_workers
+        self.min_results = 100
 
         self.session = requests.Session()
         self.session.headers.update(
@@ -51,31 +52,54 @@ class CustomSearchCollector:
     # ------------------------------------------------------------------
     # Public APIs
     # ------------------------------------------------------------------
-    def run_custom_search(self, keyword: str, max_results: int = 80) -> List[Dict[str, Any]]:
+    def run_custom_search(self, keyword: str, max_results: int = 120) -> List[Dict[str, Any]]:
         """运行完整的自定义搜索流程。"""
         logger.info("🚀 开始自定义搜索: %s", keyword)
 
         news_list = self.search_news(keyword, max_results=max_results)
         if not news_list:
-            logger.warning("⚠️ 未找到相关新闻，创建示例数据")
-            news_list = self._create_sample_news(keyword)
+            logger.error("❌ 未找到与 %s 相关的实时新闻，请尝试更换关键词。", keyword)
+            return []
 
         self.save_news(news_list, keyword)
         logger.success("🎉 自定义搜索完成！共获取 %s 条新闻", len(news_list))
+        if len(news_list) < self.min_results:
+            logger.warning(
+                "⚠️ 搜索结果仅 %s 条，未达到 %s 条目标，建议尝试更具体或更广泛的关键词组合。",
+                len(news_list),
+                self.min_results,
+            )
         return news_list
 
-    def search_news(self, keyword: str, max_results: int = 80) -> List[Dict[str, Any]]:
+    def search_news(self, keyword: str, max_results: int = 120) -> List[Dict[str, Any]]:
         """根据关键词搜索新闻并做预处理。"""
         logger.info("🔍 开始搜索关键词: %s", keyword)
         aggregated: List[Dict[str, Any]] = []
+        target_results = max(max_results, self.min_results)
 
-        ddg_results = self._search_duckduckgo(keyword, max_results=max_results)
-        aggregated.extend(ddg_results)
+        primary_terms = [keyword]
+        auxiliary_terms = [
+            f"{keyword} 最新",
+            f"{keyword} 新闻",
+            f"{keyword} 市场",
+            f"{keyword} 趋势",
+        ]
 
-        # 当 DuckDuckGo 结果数量不足时，尝试简易网页抓取作为补充
-        if len(aggregated) < max_results // 3:
+        for term in primary_terms + [t for t in auxiliary_terms if t not in primary_terms]:
+            ddg_results = self._search_duckduckgo(term, max_results=target_results)
+            aggregated.extend(ddg_results)
+            if len(aggregated) >= target_results:
+                break
+
+        if len(aggregated) < target_results:
             logger.info("DuckDuckGo 结果不足，尝试补充通用网页抓取...")
-            aggregated.extend(self._search_generic(keyword, remaining=max_results - len(aggregated)))
+            aggregated.extend(self._search_generic(keyword, remaining=target_results - len(aggregated)))
+
+        if len(aggregated) < target_results:
+            for term in auxiliary_terms:
+                if len(aggregated) >= target_results:
+                    break
+                aggregated.extend(self._search_generic(term, remaining=target_results - len(aggregated)))
 
         if not aggregated:
             return []
@@ -90,7 +114,7 @@ class CustomSearchCollector:
 
         deduplicated.sort(key=lambda x: x.get("publish_time", ""), reverse=True)
         logger.success("🎉 搜索完成！共获取 %s 条相关新闻", len(deduplicated))
-        return deduplicated[:max_results]
+        return deduplicated[:target_results]
 
     def save_news(self, news_list: List[Dict[str, Any]], keyword: str) -> None:
         """保存搜索到的新闻数据到本地 JSON 文件。"""
@@ -318,14 +342,17 @@ class CustomSearchCollector:
         return None
 
     def _deduplicate_news(self, news_list: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """按标题进行去重。"""
+        """按链接优先去重，保留不同来源的重复标题。"""
         unique: Dict[str, Dict[str, Any]] = {}
         for news in news_list:
             title = (news.get("title") or "").strip().lower()
-            if not title:
+            link = (news.get("link") or news.get("url") or "").strip().lower()
+            source = (news.get("source") or "").strip().lower()
+            if not title and not link:
                 continue
-            if title not in unique:
-                unique[title] = news
+            key = link if link else f"{title}::{source}"
+            if key not in unique:
+                unique[key] = news
         return list(unique.values())
 
     def _create_sample_news(self, keyword: str) -> List[Dict[str, Any]]:

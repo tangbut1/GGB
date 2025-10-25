@@ -6,6 +6,7 @@ import requests
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
+from typing import Any, Dict, List, Tuple
 from loguru import logger
 
 
@@ -15,22 +16,29 @@ class NewsCollector:
     def __init__(self, categories=None):
         self.data_dir = Path(__file__).resolve().parents[2] / "data"
         self.data_dir.mkdir(exist_ok=True)
-        
-        # 设置时间过滤：只抓取7天内的数据（在线新闻采集）
-        self.cutoff_date = datetime.now() - timedelta(days=7)
+
+        # 设置时间过滤：只抓取最近3天内的数据
+        self.cutoff_date = datetime.now() - timedelta(days=3)
+        self.min_results = 100
 
         # 多源RSS配置（按类别组织，便于用户选择）
-        # 更新为可用的RSS源，包含国际和中文源
+
         self.category_feeds = {
             "科技": [
                 "https://feeds.bbci.co.uk/news/technology/rss.xml",
                 "https://feeds.reuters.com/reuters/technologyNews",
-                "https://feeds.feedburner.com/oreilly/radar"
+                "https://feeds.feedburner.com/oreilly/radar",
+                "https://www.theverge.com/rss/index.xml",
+                "https://feeds.arstechnica.com/arstechnica/index",
+                "https://www.wired.com/feed/rss"
             ],
             "金融": [
                 "https://feeds.bbci.co.uk/news/business/rss.xml",
                 "https://feeds.reuters.com/reuters/businessNews",
-                "https://feeds.marketwatch.com/marketwatch/topstories/"
+                "https://feeds.marketwatch.com/marketwatch/topstories/",
+                "https://www.cnbc.com/id/10000664/device/rss/rss.html",
+                "https://www.ft.com/rss/home/asia",
+                "https://www.economist.com/finance-and-economics/rss.xml"
             ],
             "国际": [
                 "https://feeds.bbci.co.uk/news/world/rss.xml",
@@ -38,12 +46,17 @@ class NewsCollector:
                 "https://feeds.a.dj.com/rss/RSSWorldNews.xml",
                 "https://feeds.cnn.com/rss/edition.rss",
                 "https://feeds.npr.org/1001/rss.xml",
-                "https://feeds.nytimes.com/nyt/World.xml"
+                "https://feeds.nytimes.com/nyt/World.xml",
+                "https://www.aljazeera.com/xml/rss/all.xml",
+                "https://www.scmp.com/rss/91/feed"
             ],
             "股票": [
                 "https://feeds.marketwatch.com/marketwatch/marketpulse/",
                 "https://feeds.a.dj.com/rss/RSSMarketsMain.xml",
-                "https://feeds.finance.yahoo.com/rss/2.0/headline"
+                "https://feeds.finance.yahoo.com/rss/2.0/headline",
+                "https://seekingalpha.com/market_currents.xml",
+                "https://www.nasdaq.com/feed/rssoutbound?category=MarketHeadlines",
+                "https://finance.yahoo.com/news/rssindex"
             ]
         }
 
@@ -84,51 +97,82 @@ class NewsCollector:
         """检查新闻是否在3天内发布"""
         if not published_str:
             return True  # 如果没有时间信息，默认包含
-        
+
         try:
-            # 尝试解析各种时间格式
             published_time = None
-            
-            # 常见的时间格式
             time_formats = [
-                "%a, %d %b %Y %H:%M:%S %Z",  # RFC 2822
-                "%a, %d %b %Y %H:%M:%S %z",  # RFC 2822 with timezone
-                "%Y-%m-%d %H:%M:%S",          # ISO format
-                "%Y-%m-%dT%H:%M:%S",         # ISO format with T
-                "%Y-%m-%dT%H:%M:%SZ",       # ISO format with Z
-                "%Y-%m-%dT%H:%M:%S.%fZ",    # ISO format with microseconds
-                "%a, %d %b %Y %H:%M:%S",    # Without timezone
+                "%a, %d %b %Y %H:%M:%S %Z",
+                "%a, %d %b %Y %H:%M:%S %z",
+                "%Y-%m-%d %H:%M:%S",
+                "%Y-%m-%dT%H:%M:%S",
+                "%Y-%m-%dT%H:%M:%SZ",
+                "%Y-%m-%dT%H:%M:%S.%fZ",
+                "%a, %d %b %Y %H:%M:%S",
             ]
-            
+
             for fmt in time_formats:
                 try:
                     published_time = datetime.strptime(published_str, fmt)
                     break
                 except ValueError:
                     continue
-            
+
             if published_time is None:
-                # 如果所有格式都失败，使用feedparser的时间解析
                 try:
                     import email.utils
                     published_time = email.utils.parsedate_to_datetime(published_str)
-                except:
-                    return True  # 解析失败时默认包含
-            
-            # 检查是否在3天内
+                except Exception:
+                    return True
+
             return published_time >= self.cutoff_date
-            
         except Exception as e:
             logger.warning(f"时间解析失败: {published_str} - {e}")
-            return True  # 解析失败时默认包含
+            return True
 
-    def fetch_latest(self):
-        """从多个RSS源抓取新闻"""
-        all_news = []
+    def _collect_feed_entries(self, category: str, url: str) -> List[Dict[str, Any]]:
+        """采集单个RSS源的新闻列表"""
+        logger.info(f"Fetching {category} news from {url} ...")
+        try:
+            feed = feedparser.parse(url)
+            if hasattr(feed, 'bozo') and feed.bozo:
+                logger.warning(f"RSS解析警告: {url} - {getattr(feed, 'bozo_exception', 'Unknown error')}")
+            if not feed.entries:
+                logger.warning(f"No entries found in {url}")
+                return []
+
+            source_news: List[Dict[str, Any]] = []
+            for entry in feed.entries:
+                if not self._is_recent_news(entry.get("published", "")):
+                    continue
+                item = {
+                    "title": entry.get("title", "").strip(),
+                    "link": entry.get("link", "").strip(),
+                    "published": entry.get("published", ""),
+                    "summary": entry.get("summary", "").strip(),
+                    "content": entry.get("content", [{}])[0].get("value", "") if entry.get("content") else "",
+                    "source": url,
+                    "category": category
+                }
+                if item["title"] and item["link"]:
+                    source_news.append(item)
+
+            if source_news:
+                logger.success(f"✅ 成功从 {url} 获取 {len(source_news)} 条 {category} 类新闻")
+            else:
+                logger.warning(f"从 {url} 获取的新闻为空或无效")
+            return source_news
+        except Exception as e:
+            logger.error(f"❌ 从 {url} 抓取失败: {e}")
+            return []
+
+    def fetch_latest(self) -> List[Dict[str, Any]]:
+        """从多个RSS源抓取新闻，目标不少于100条"""
+        all_news: List[Dict[str, Any]] = []
         successful_sources = 0
+        processed_urls = set()
 
         categories = self.selected_categories or list(self.category_feeds.keys())
-        planned_feeds = []
+        planned_feeds: List[Tuple[str, str]] = []
         for category in categories:
             feeds = self.category_feeds.get(category, [])
             planned_feeds.extend([(category, url) for url in feeds])
@@ -137,56 +181,49 @@ class NewsCollector:
             logger.warning("未找到匹配的RSS源，使用所有默认源。")
             for category, urls in self.category_feeds.items():
                 planned_feeds.extend([(category, url) for url in urls])
+            categories = list(self.category_feeds.keys())
 
         for category, url in planned_feeds:
-            logger.info(f"Fetching {category} news from {url} ...")
-            try:
-                # 使用feedparser抓取RSS，增加超时和重试机制
-                feed = feedparser.parse(url)
-
-                # 检查RSS解析状态
-                if hasattr(feed, 'bozo') and feed.bozo:
-                    logger.warning(f"RSS解析警告: {url} - {getattr(feed, 'bozo_exception', 'Unknown error')}")
-
-                if not feed.entries:
-                    logger.warning(f"No entries found in {url}")
-                    continue
-
-                source_news = []
-                for entry in feed.entries:
-                    # 检查发布时间是否在3天内
-                    if not self._is_recent_news(entry.get("published", "")):
-                        continue
-                    
-                    # 标准化数据结构，增加更多字段处理
-                    item = {
-                        "title": entry.get("title", "").strip(),
-                        "link": entry.get("link", "").strip(),
-                        "published": entry.get("published", ""),
-                        "summary": entry.get("summary", "").strip(),
-                        "content": entry.get("content", [{}])[0].get("value", "") if entry.get("content") else "",
-                        "source": url,  # 添加来源标识
-                        "category": category
-                    }
-
-                    # 过滤空标题和无效链接
-                    if item["title"] and item["link"]:
-                        source_news.append(item)
-
-                if source_news:
-                    all_news.extend(source_news)
-                    successful_sources += 1
-                    logger.success(f"✅ 成功从 {url} 获取 {len(source_news)} 条 {category} 类新闻")
-                else:
-                    logger.warning(f"从 {url} 获取的新闻为空或无效")
-
-            except Exception as e:
-                logger.error(f"❌ 从 {url} 抓取失败: {e}")
+            if url in processed_urls:
                 continue
+            processed_urls.add(url)
+            entries = self._collect_feed_entries(category, url)
+            if entries:
+                all_news.extend(entries)
+                successful_sources += 1
+            if len(all_news) >= self.min_results:
+                break
 
+        if len(all_news) < self.min_results:
+            remaining_categories = [cat for cat in self.category_feeds if cat not in categories]
+            if remaining_categories:
+                logger.warning(
+                    f"当前所选类别仅获取到 {len(all_news)} 条新闻，自动补充其他类别以达到 {self.min_results} 条目标。"
+                )
+                for category in remaining_categories:
+                    for url in self.category_feeds.get(category, []):
+                        if url in processed_urls:
+                            continue
+                        processed_urls.add(url)
+                        entries = self._collect_feed_entries(category, url)
+                        if entries:
+                            all_news.extend(entries)
+                            successful_sources += 1
+                        if len(all_news) >= self.min_results:
+                            break
+                    if len(all_news) >= self.min_results:
+                        break
+
+        total_sources = len(processed_urls)
         logger.info(
-            f"📊 总计从 {successful_sources}/{len(planned_feeds)} 个源获取 {len(all_news)} 条新闻"
+            f"📊 总计从 {successful_sources}/{total_sources} 个源获取 {len(all_news)} 条新闻"
         )
+        if len(all_news) < self.min_results:
+            logger.warning(
+                f"⚠️ 当前仅获取 {len(all_news)} 条新闻，未达到 {self.min_results} 条目标，请检查网络或调整类别配置。"
+            )
+        else:
+            logger.success(f"🎯 已达到 {self.min_results} 条以上的新闻样本量要求")
         return all_news
 
     def clean_and_deduplicate(self, news_list):
@@ -201,14 +238,19 @@ class NewsCollector:
         
         for news in news_list:
             title = news.get("title", "").strip()
-            if not title:
+            link = (news.get("link") or news.get("url") or "").strip().lower()
+            source = (news.get("source") or "").strip().lower()
+            if not title and not link:
                 continue
                 
-            # 生成唯一标识符
-            content_hash = hashlib.md5(title.encode("utf-8")).hexdigest()
+            # 生成唯一标识符（同源同链接才视为重复）
+            if link:
+                dedup_key = link
+            else:
+                dedup_key = hashlib.md5(f"{title.lower()}::{source}".encode("utf-8")).hexdigest()
             
-            if content_hash not in unique_news:
-                unique_news[content_hash] = news
+            if dedup_key not in unique_news:
+                unique_news[dedup_key] = news
             else:
                 duplicates_removed += 1
         
@@ -301,13 +343,17 @@ class NewsCollector:
         # 1. 抓取新闻
         raw_news = self.fetch_latest()
         
-        # 2. 如果没有获取到新闻，使用示例数据
+        # 2. 如果没有获取到新闻，直接返回并提示用户检查配置
         if not raw_news:
-            logger.warning("⚠️ 未能从RSS源获取新闻，使用示例数据进行演示")
-            raw_news = self.create_sample_data()
+            logger.error("❌ 未能从RSS源获取新闻，请检查网络连接或RSS源配置")
+            return []
         
         # 3. 清洗去重
         cleaned_news = self.clean_and_deduplicate(raw_news)
+        if len(cleaned_news) < self.min_results:
+            logger.warning(
+                f"⚠️ 清洗后新闻数量为 {len(cleaned_news)} 条，未达到 {self.min_results} 条目标，可尝试扩展采集类别。"
+            )
         
         # 4. 保存数据
         self.save_news(cleaned_news)

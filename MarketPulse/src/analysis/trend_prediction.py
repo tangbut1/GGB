@@ -1,6 +1,6 @@
 import pandas as pd
 import numpy as np
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Tuple, Optional
 from pathlib import Path
 import json
 from datetime import datetime, timedelta
@@ -14,7 +14,9 @@ class TrendPredictor:
     
     def __init__(self):
         self.model = None
+        self.model_type = "prophet"
         self.forecast_periods = 30  # 默认预测30天
+        self._training_df = pd.DataFrame()
         
     def prepare_data(self, sentiment_data: List[Dict[str, Any]]) -> pd.DataFrame:
         """
@@ -54,8 +56,19 @@ class TrendPredictor:
         
         # 按日期聚合，计算每日平均情绪
         if not df.empty:
-            df = df.groupby('ds')['y'].mean().reset_index()
+            df = (
+                df.groupby('ds')['y'].mean().reset_index().sort_values('ds')
+            )
             df['ds'] = pd.to_datetime(df['ds'])
+            df = (
+                df.set_index('ds')
+                .resample('D')
+                .mean()
+                .interpolate(method='linear')
+                .ffill()
+                .bfill()
+                .reset_index()
+            )
         
         return df
     
@@ -69,8 +82,10 @@ class TrendPredictor:
         Returns:
             是否训练成功
         """
-        if df.empty or len(df) < 7:  # 至少需要7天数据
+        if df.empty or df['ds'].nunique() < 2:
             return False
+        
+        self._training_df = df.copy()
         
         try:
             # 创建Prophet模型
@@ -84,9 +99,16 @@ class TrendPredictor:
             
             # 训练模型
             self.model.fit(df)
+            self.model_type = "prophet"
             return True
         except Exception as e:
-            print(f"模型训练失败: {e}")
+            print(f"Prophet模型训练失败: {e}")
+            baseline_model = self._build_baseline_model(df)
+            if baseline_model is not None:
+                self.model = baseline_model
+                self.model_type = "baseline"
+                return True
+            print("基线趋势模型构建失败，无法进行趋势预测")
             return False
     
     def predict_trend(self, periods: int = None) -> Dict[str, Any]:
@@ -105,26 +127,95 @@ class TrendPredictor:
         periods = periods or self.forecast_periods
         
         try:
-            # 创建未来日期
-            future = self.model.make_future_dataframe(periods=periods)
+            if self.model_type == "prophet":
+                future = self.model.make_future_dataframe(periods=periods)
+                forecast = self.model.predict(future)
+                prediction_records = forecast[['ds', 'yhat', 'yhat_lower', 'yhat_upper']].tail(periods).to_dict('records')
+            else:
+                forecast, prediction_records = self._forecast_with_baseline(periods)
             
-            # 进行预测
-            forecast = self.model.predict(future)
-            
-            # 提取预测结果
-            predictions = forecast[['ds', 'yhat', 'yhat_lower', 'yhat_upper']].tail(periods)
-            
-            # 计算趋势方向
             recent_trend = self._calculate_trend_direction(forecast)
+            confidence = self._calculate_confidence(forecast)
             
             return {
-                'predictions': predictions.to_dict('records'),
+                'predictions': prediction_records,
                 'trend_direction': recent_trend,
-                'confidence': self._calculate_confidence(forecast),
-                'forecast_periods': periods
+                'confidence': confidence,
+                'forecast_periods': periods,
+                'model_type': self.model_type
             }
         except Exception as e:
             return {'error': f'预测失败: {e}'}
+    
+    def _build_baseline_model(self, df: pd.DataFrame) -> Optional[Dict[str, Any]]:
+        """构建线性回归基线模型，作为Prophet失败时的后备方案"""
+        df = df.sort_values('ds').reset_index(drop=True)
+        if len(df) < 2:
+            return None
+        
+        try:
+            values = df['y'].astype(float).values
+            x = np.arange(len(values))
+            slope, intercept = np.polyfit(x, values, 1)
+            residuals = values - (intercept + slope * x)
+            residual_std = float(np.std(residuals)) if len(residuals) > 1 else 0.0
+            return {
+                'intercept': float(intercept),
+                'slope': float(slope),
+                'residual_std': residual_std,
+                'history': df[['ds', 'y']].copy()
+            }
+        except Exception:
+            return None
+    
+    def _forecast_with_baseline(self, periods: int) -> Tuple[pd.DataFrame, List[Dict[str, Any]]]:
+        """使用线性基线模型进行趋势预测"""
+        if not isinstance(self.model, dict):
+            raise ValueError("基线模型尚未构建")
+        
+        history_df = self.model.get('history', pd.DataFrame()).copy()
+        history_df['ds'] = pd.to_datetime(history_df['ds'])
+        history_df = history_df.sort_values('ds').reset_index(drop=True)
+        slope = self.model.get('slope', 0.0)
+        intercept = self.model.get('intercept', 0.0)
+        residual_std = self.model.get('residual_std', 0.0)
+        margin = max(residual_std * 1.96, 0.1)
+        
+        x_hist = np.arange(len(history_df)) if not history_df.empty else np.array([])
+        history_yhat = intercept + slope * x_hist if len(x_hist) else np.array([])
+        history_forecast = history_df[['ds']].copy() if not history_df.empty else pd.DataFrame({'ds': []})
+        if not history_forecast.empty:
+            history_forecast['yhat'] = history_yhat
+            history_forecast['yhat_lower'] = history_yhat - margin
+            history_forecast['yhat_upper'] = history_yhat + margin
+        
+        future_rows = []
+        last_date = history_df['ds'].max() if not history_df.empty else datetime.now()
+        for step in range(periods):
+            ds_value = last_date + timedelta(days=step + 1)
+            x_value = len(history_df) + step
+            yhat = intercept + slope * x_value
+            lower = yhat - margin
+            upper = yhat + margin
+            future_rows.append({
+                'ds': ds_value,
+                'yhat': yhat,
+                'yhat_lower': lower,
+                'yhat_upper': upper
+            })
+        
+        future_forecast = pd.DataFrame(future_rows)
+        combined = pd.concat([history_forecast, future_forecast], ignore_index=True) if not history_forecast.empty else future_forecast
+        prediction_records = [
+            {
+                'ds': row['ds'],
+                'yhat': float(row['yhat']),
+                'yhat_lower': float(row['yhat_lower']),
+                'yhat_upper': float(row['yhat_upper'])
+            }
+            for row in future_rows
+        ]
+        return combined, prediction_records
     
     def _calculate_trend_direction(self, forecast: pd.DataFrame) -> str:
         """计算趋势方向"""
@@ -201,7 +292,8 @@ class TrendPredictor:
             'trend_direction': prediction_result['trend_direction'],
             'confidence': prediction_result['confidence'],
             'predictions': prediction_result['predictions'],
-            'historical_data': df.to_dict('records')
+            'historical_data': df.to_dict('records'),
+            'model_type': prediction_result.get('model_type', self.model_type)
         }
         
         return analysis_summary
@@ -258,7 +350,8 @@ class TrendPredictor:
             'confidence': confidence,
             'recommendation': recommendation,
             'data_points': results.get('data_points', 0),
-            'forecast_periods': results.get('forecast_periods', 0)
+            'forecast_periods': results.get('forecast_periods', 0),
+            'model_type': results.get('model_type', self.model_type)
         }
 
 

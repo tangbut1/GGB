@@ -1,27 +1,21 @@
-echo "venv/" >> .gitignore
-echo "__pycache__/" >> .gitignore
-echo "*.pyc" >> .gitignore
-echo "data/raw/" >> .gitignore
-echo "results/" >> .gitignore
-echo ".DS_Store" >> .gitignore
-
 # Python 缓存与临时文件
 __pycache__/
-*.pyc
+*.py[cod]
 *.pyo
 *.pyd
 *.log
-*.sqlite3
 
-# 虚拟环境
+# 虚拟环境与环境变量
+.venv/
 venv/
-.env/
-.env.bak/
+.env
+.env.*
 .envrc
 *.env
 
-# VSCode 配置
+# IDE / 编辑器配置
 .vscode/
+.idea/
 
 # 数据与输出
 data/
@@ -31,13 +25,12 @@ results/
 *.json
 *.db
 
-# Jupyter 临时文件
-.ipynb_checkpoints/
-
 # 构建与打包文件
 build/
 dist/
 *.egg-info/
+*.egg
+*.whl
 
 # 系统文件
 .DS_Store

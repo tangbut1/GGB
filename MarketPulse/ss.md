@@ -1,238 +1,92 @@
 ## 2.2 核心模块设计
+为保障市场脉搏分析平台在复杂资讯环境下的稳定运行，系统从数据入口到知识产出构建了层层递进的模块化结构。各核心模块既保持功能内聚，又通过标准化的数据接口进行耦合，对研究生阶段的实证研究形成可靠支撑。以下从数据采集与输入管理、情绪建模与结果呈现两个维度展开阐述，并细化至关键类与方法。
+
 ### 2.2.1 多源数据采集与输入管理模块
-本模块聚焦于实现市场资讯的多通道采集与标准化入库，确保后续分析所需的数据密度与质量。
+该模块聚焦于为后续分析提供高覆盖率且格式化的语料来源，涵盖在线 RSS 抓取、自定义关键词搜索与本地文件导入三种模式，并通过统一的数据结构实现无缝切换。
 
-- **RSS 批量采集子系统（`NewsCollector`）**：
-  - 通过 `fetch_latest()` 维护跨 BBC、Reuters、CNBC 等源的类别化 RSS 清单，并以 `min_results=100` 保证样本量。
-  - 采用 `_is_recent_news()` 结合多种日期格式解析，仅保留近三日资讯，降低陈旧数据干扰。
-  - `clean_and_deduplicate()` 使用链接优先与 MD5 组合去重策略，避免跨平台重复报道污染统计。
-  - `run_full_pipeline()` 串联抓取、清洗与本地缓存（`save_news`），并在采集不足时回退生成示例数据，提升系统鲁棒性。
+#### 架构概览
+- **数据源调度层**：`main.py` 中的 `DATA_SOURCE_CHOICES` 与 `run_pipeline()` 将用户选择映射为采集策略，支持“在线”“自定义搜索”“本地”“混合”四种模式。
+- **采集执行层**：由 `NewsCollector`（RSS）与 `CustomSearchCollector`（关键词搜索）分别负责，从不同渠道获取原始资讯。
+- **标准化接入层**：利用 `load_local_table()` 与 `deduplicate_news()` 将各来源统一为字段完整、去重后的标准化字典列表。
 
-- **关键词搜索补偿子系统（`CustomSearchCollector`）**：
-  - 由 `run_custom_search()` 组合 DuckDuckGo API 与 Bing HTML 回退，实现对热点事件的快速检索。
-  - `_enrich_news_content()` 使用线程池抓取正文与摘要，结合 `_parse_datetime()` 统一时间线；同时 `_deduplicate_news()` 跨来源去重。
-  - 所得结果通过 `save_news()` 落盘 `data/raw` 目录，便于实验复现与后续溯源。
+#### 关键组件与方法
+- **RSS 批量采集子系统（`src.collect.news_collector.NewsCollector`）**
+  - `__init__(categories)`：根据用户选择或默认类别（科技、金融、国际、股票）初始化源表，并设置 `min_results=100` 与三日时间窗口，确保数据新鲜度。
+  - `fetch_latest()`：逐源调用 `_collect_feed_entries()`，记录成功/失败源数；当目标样本量不足时自动补充未选类别，实现弹性扩充。
+  - `_collect_feed_entries(category, url)`：使用 `feedparser` 解析 RSS，针对每条目提取标题、链接、摘要、正文等字段，结合 `_is_recent_news()` 过滤过期资讯，并记录日志。
+  - `clean_and_deduplicate(news_list)`：以链接为主键、来源加标题的 MD5 为退路，去除重复报道；返回去重列表并输出统计。
+  - `save_news(news_list)`：将原始数据序列化至 `data/raw/raw_news.json`，为实验复现提供数据快照。
+  - `run_full_pipeline()`：串联“抓取 → 去重 → 落盘”流程，并在源完全失效时调用 `create_sample_data()` 生成示例集，保证管线可继续执行。
 
-- **本地数据导入接口（`load_local_table`）**：
-  - 支持 CSV/XLSX/JSON，借助 `_normalize_columns()` 自动映射“标题/内容/类别”等多语言列名，保障格式统一。
-  - 输出标准化 `List[Dict]` 供主流程直接消费，同时提供预览 `DataFrame` 以便在界面侧校验。
+- **关键词搜索补偿子系统（`src.collect.custom_search.CustomSearchCollector`）**
+  - `run_custom_search(keyword, max_results=120)`：融合 DuckDuckGo 新闻接口与 Bing HTML 抓取；当主搜索结果不足时自动触发 `_search_generic()` 补全。
+  - `_search_duckduckgo()` 与 `_search_generic()`：分别负责结构化 API 与半结构化网页解析，并通过 `_parse_datetime()` 将多样时间格式统一为 `datetime` 对象。
+  - `_enrich_news_content(news_items)`：以线程池并发调用 `_extract_article_text()` 补全正文与摘要，限制最大抓取条数与文本长度，兼顾效率与质量。
+  - `_deduplicate_news(news_list)`：按链接与来源联合主键去重，保留跨媒体的差异化报道。
+  - `save_news(news_list, keyword)`：对关键词进行文件名安全化处理，将结果保存至 `data/raw/custom_search_*`，附带时间戳便于追踪。
 
-上述子模块在 `main.py` 中的 `run_pipeline()` 内协同工作，利用 `DATA_SOURCE_CHOICES` 进行策略分发，可灵活实现在线、离线与混合模式，满足多样化研究场景。
+- **本地数据导入接口（`src.data.local_loader.load_local_table`）**
+  - 文件解析：支持 CSV、XLS/XLSX、JSON 及未知后缀的回退解析；在读取失败时自动二次尝试（`StringIO` / `BytesIO`），提高适配性。
+  - `_normalize_columns(df)`：通过 `COLUMN_ALIASES` 对中文/英文列名进行语义映射，缺失字段则补齐空列，确保输出字段集为 `title/content/summary/publish_time/source/category`。
+  - 返回值：输出标准化记录列表与预览用 `DataFrame`；前者直接供 `run_pipeline()` 消费，后者可在前端提供前 20 行展示以辅助用户检验数据质量。
+
+#### 数据质量与稳健性策略
+1. **时间窗口约束**：无论 RSS 还是搜索结果，均通过 `_is_recent_news()` 和 `_parse_datetime()` 控制在近三天内，避免历史噪声。
+2. **多级去重**：既在采集阶段处理重复链接，也在 `main.py` 中调用 `deduplicate_news()` 进行最终归一化，保证情绪计算基数准确。
+3. **失效回退机制**：当外部接口失效时，RSS 模块提供示例数据，搜索模块通过多关键词与双通道补偿，确保实验流程可持续。
+4. **可追溯存档**：所有原始与清洗后数据均落盘至 `data/raw` 与 `data/processed`，配合日志输出便于后续溯源与复现。
 
 ### 2.2.2 情绪建模与可视化呈现模块
-该模块承担文本清洗、情绪估计、趋势预测及呈现解释的闭环任务，支持研究者从数据到洞察的全链路分析。
+该模块负责将标准化文本转换为可量化的情绪指数、趋势预测与可视化报告，覆盖文本预处理、情绪推断、时间序列建模、AI 辅助解读、交互式呈现等关键环节。
 
-- **文本预处理（`DataCleaner`）**：
-  - `clean_text()` 先行剔除 HTML、噪声字符，并结合财经停用词与结巴分词提取有效词项；对英文内容保留原义信息。
-  - `clean_news_batch()` 对标题、正文、摘要三要素并行清洗，同时保留原文字段供后续比对；`save_cleaned_data()` 将结果固化于 `data/processed`。
+#### 处理流程概述
+1. **文本清洗**：`DataCleaner` 对标题、正文、摘要进行分词与停用词过滤，生成干净语料并保留原文备份。
+2. **情绪估计**：`SentimentAnalyzer` 基于词典、SnowNLP、TextBlob 三元融合得出情绪得分与置信度。
+3. **趋势建模**：`TrendPredictor` 将情绪序列对齐为 Prophet 所需结构，输出未来 30 天的走势预测并提供基线回退方案。
+4. **AI 辅助分析**：`AIClient` 自适应调用 OpenAI / HuggingFace / 自定义接口，为部分样本追加模型评分与自然语言解读。
+5. **可视化与报告**：`ChartGenerator`、`DashboardManager`、`PDFReportGenerator`、`DOCXReportGenerator` 等组件将结果以图表、仪表盘与文档形式呈现。
 
-- **多模型情绪估计（`SentimentAnalyzer`）**：
-  - `analyze_single()` 综合词典、SnowNLP 与 TextBlob 三路评分，依据标准差动态估算置信度。
-  - `analyze_news_batch()` 面向新闻粒度追加情绪标签；`get_sentiment_summary()` 统计整体正/负/中比例与均值。
-  - 分析日志借由 `save_analysis_results()` 写入 `results/logs`，便于追踪模型漂移。
+#### 核心组件与方法
+- **文本预处理模块（`src.preprocess.cleaner.DataCleaner`）**
+  - `clean_text(text)`：执行 HTML 标签剥离、特殊字符约束、数字短语过滤，并依据是否包含中文选择分词策略；中文文本采用结巴分词与财经停用词表强化语义噪声过滤。
+  - `clean_news_batch(news_list)`：批量处理新闻记录，分别清洗标题、内容、摘要，若清洗结果为空则回退原文；保留 `original_*` 字段以支持对照研究。
+  - `save_cleaned_data(cleaned_news)`：将清洗结果保存至 `data/processed/cleaned_news.json`，便于后续模型训练或人工审阅。
+  - `extract_keywords(text, top_k)`：提供高频词提取能力，为词云图与主题分析提供数据基础。
 
-- **趋势预测与基线回退（`TrendPredictor`）**：
-  - `prepare_data()` 将资讯按日聚合成 Prophet 所需序列；`train_model()` 优先训练 Prophet，若失败则自动初始化线性基线模型。
-  - `analyze_market_sentiment_trend()` 输出预测结果、置信度及历史样本，`save_prediction_results()` 记录生成时间，实现可审计性。
+- **情绪分析模块（`src.analysis.sentiment_analysis.SentimentAnalyzer`）**
+  - `analyze_single(text)`：分别调用 `_dict_based_sentiment()`（词典法）、`_snownlp_sentiment()`（中文情绪模型）、`_textblob_sentiment()`（英文情绪模型），再用均值融合并以标准差估置信度；根据阈值输出 `positive/neutral/negative` 标签。
+  - `analyze_news_batch(news_list)`：对清洗后的新闻逐条融合标题、内容、摘要进行分析，并将情绪指标写回原结构，便于下游使用。
+  - `get_sentiment_summary(analyzed_news)`：统计总样本量、各情绪类别数量与平均得分，为仪表盘指标卡提供数据来源。
+  - `save_analysis_results(analyzed_news, summary)`：以 JSON 形式持久化详细结果与摘要至 `results/logs/sentiment_analysis.json`，支撑后续论文或报告引用。
 
-- **可视化与交互展示（`ChartGenerator` & `DashboardManager`）**：
-  - `create_sentiment_distribution_chart()`、`create_trend_prediction_chart()` 等方法生成 Plotly 图形，并由 `save_chart()` 输出 PNG/HTML。
-  - `DashboardManager.render_complete_dashboard()` 在 Streamlit 端组织指标卡、图表分栏、关键词分析与报告导出入口，形成面向决策的界面。
+- **趋势预测模块（`src.analysis.trend_prediction.TrendPredictor`）**
+  - `prepare_data(sentiment_data)`：将情绪结果按发布日期聚合为日均值，并进行缺失值线性插值，确保时间序列连续。
+  - `train_model(df)`：优先训练 Prophet 模型；若外部依赖缺失或训练失败则调用 `_build_baseline_model()` 生成线性回归方案，增强鲁棒性。
+  - `predict_trend(periods)`：基于成功训练的模型输出未来情绪预测区间（`yhat`, `yhat_lower`, `yhat_upper`），并计算趋势方向与置信度。
+  - `analyze_market_sentiment_trend(sentiment_data, periods)`：封装“准备 → 训练 → 预测”链路，返回包含历史数据、预测结果及元信息的综合摘要；`save_prediction_results()` 将结果固化至 `results/logs/trend_prediction.json`。
+  - `get_trend_summary(results)`：对预测结果进行语义化解读，生成“积极/消极/稳定”趋势及对应建议。
 
-- **AI 辅助解读与报告导出（`AIClient`、`PDFReportGenerator`、`DOCXReportGenerator`）**：
-  - `AIClient.auto_detect()` 根据环境变量自动选择 OpenAI/HuggingFace 模型，`classify_sentiment()` 为高置信样本补充 AI 得分，`generate_insights()` 生成中文解读文本。
-  - 报告模块使用 ReportLab 与 python-docx，依序构建目录、执行摘要、情绪详情与图表画廊，实现成果的格式化归档。
+- **AI 辅助解读模块（`src.ai_integration.AIClient`）**
+  - `auto_detect()`：依据环境变量自动确定提供商及模型（OpenAI / HuggingFace / 自定义 / 无 AI），减少配置成本。
+  - `classify_sentiment(texts)`：按提供商分别调用 `_classify_with_openai()`、`_classify_with_huggingface()` 或 `_classify_with_custom_endpoint()`；在模型不可用时退回 `_rule_based_scores()`，保障输出稳定。
+  - `generate_insights(sentiment_summary, trend_summary)`：当可用时调用文本生成模型，产生结构化的“情绪解读”与“趋势点评”；否则调用 `_rule_based_commentary()` 输出模板化分析。
 
-通过上述模块化设计，系统实现了从数据入口到分析结果的全流程可插拔能力，方便在研究生阶段针对不同市场事件快速迭代实验。
+- **可视化与报告模块**
+  - `src.visualization.charts.ChartGenerator`：提供情绪分布饼图、时间线散点图、趋势预测曲线、热力图及关键词柱状图等多种 Plotly 图形，`save_chart(fig, path, format)` 可导出 PNG/HTML 供线下引用。
+  - `src.visualization.dashboard.DashboardManager`：在 Streamlit 前端组织指标卡、图表标签页、新闻详情筛选与关键词分析等交互，关键方法包括 `render_sentiment_overview()`、`render_charts_section()`、`render_news_details()` 等。
+  - `src.report.export_pdf.PDFReportGenerator` 与 `src.report.export_doc.DOCXReportGenerator`：基于 ReportLab 与 python-docx 构建标准化报告结构，包含标题页、目录、执行摘要、情绪详情、趋势分析、案例分析与图表集，实现成果固化与分享。
 
-## 3 核心功能与编码实现
-### 3.1 编码实现
-以下代码片段展示了 `main.py` 中的核心管线实现，体现数据采集、清洗、建模与可视化的串联逻辑：
+- **运行调度与状态管理（`main.py` 核心函数）**
+  - `ensure_dirs()`：在程序启动时创建 `results/charts`、`results/logs`、`results/reports`、`data/processed` 等必要目录，避免文件写入异常。
+  - `generate_chart_assets(sentiment_data, trend_data)`：驱动 `ChartGenerator` 输出情绪/趋势图，并将路径缓存于 `chart_paths`。
+  - `run_pipeline(...)`：整合上述模块，执行“采集 → 清洗 → 情绪分析 → 趋势建模 → AI 增强 → 图表生成”的完整流程；通过 `st.session_state` 缓存阶段性结果，供仪表盘、报告导出及后续交互调用。
 
-```python
-from pathlib import Path
-from typing import Any, Dict, List, Optional
+#### 数据流与接口规范
+- 输入：标准化新闻记录 `List[Dict[str, Any]]`，字段统一为标题、正文、摘要、时间、来源、类别、链接。
+- 中间结果：
+  - 清洗结果保留 `original_*` 字段，便于对照与回溯；
+  - 情绪分析输出新增 `sentiment_score`、`sentiment_confidence`、`sentiment_label`、`ai_sentiment_score`（可选）；
+  - 趋势预测返回 `historical_data` 与 `predictions`，同时附带 `trend_direction`、`confidence` 等摘要指标。
+- 输出：图表文件（PNG/HTML）、日志文件（JSON）、报告文档（PDF/DOCX）及 Streamlit 仪表盘实时展示。
 
-import pandas as pd
-import streamlit as st
-
-from src.collect.news_collector import NewsCollector
-from src.collect.custom_search import CustomSearchCollector
-from src.preprocess.cleaner import DataCleaner
-from src.analysis.sentiment_analysis import SentimentAnalyzer
-from src.analysis.trend_prediction import TrendPredictor
-from src.visualization.charts import ChartGenerator
-from src.visualization.dashboard import DashboardManager
-from src.report.export_pdf import PDFReportGenerator
-from src.report.export_doc import DOCXReportGenerator
-from src.ai_integration import AIClient
-from src.data.local_loader import load_local_table
-
-
-def run_pipeline(data_source: str,
-                 selected_categories: List[str],
-                 local_records: Optional[List[Dict[str, Any]]] = None,
-                 ai_config: Optional[Dict[str, Any]] = None,
-                 local_preview: Optional[pd.DataFrame] = None,
-                 custom_keyword: Optional[str] = None) -> None:
-    st.session_state.setdefault("news", [])
-    st.session_state.setdefault("cleaned_news", [])
-    st.session_state.setdefault("sentiment_results", [])
-    st.session_state.setdefault("sentiment_summary", {})
-    st.session_state.setdefault("trend_results", {})
-    st.session_state.setdefault("trend_summary", {})
-    st.session_state.setdefault("chart_paths", {})
-    st.session_state.setdefault("ai_summary", {})
-
-    st.write("🚀 MarketPulse: 数据分析流程启动...")
-
-    local_records = local_records or []
-    aggregated_news: List[Dict[str, Any]] = []
-    collector = NewsCollector(categories=selected_categories)
-
-    if data_source == "online":
-        with st.spinner("正在采集新闻数据..."):
-            online_news = collector.run_full_pipeline()
-            if online_news:
-                st.success(f"✅ 已采集 {len(online_news)} 条财经新闻！")
-                aggregated_news.extend(online_news)
-            else:
-                st.warning("⚠️ 未能获取在线新闻，请检查网络或RSS源。")
-
-    if data_source == "custom" and custom_keyword:
-        with st.spinner(f"正在搜索关键词: {custom_keyword}..."):
-            custom_collector = CustomSearchCollector()
-            custom_news = custom_collector.run_custom_search(custom_keyword, max_results=150)
-            if custom_news:
-                st.success(f"✅ 已搜索到 {len(custom_news)} 条相关新闻！")
-                aggregated_news.extend(custom_news)
-            else:
-                st.warning("⚠️ 未能搜索到相关新闻，请尝试其他关键词。")
-
-    if data_source == "hybrid":
-        if custom_keyword:
-            with st.spinner(f"正在搜索关键词: {custom_keyword}..."):
-                custom_collector = CustomSearchCollector()
-                custom_news = custom_collector.run_custom_search(custom_keyword, max_results=150)
-                if custom_news:
-                    st.success(f"✅ 已搜索到 {len(custom_news)} 条相关新闻！")
-                    aggregated_news.extend(custom_news)
-                else:
-                    st.warning("⚠️ 未能搜索到相关新闻，请尝试其他关键词。")
-        else:
-            st.warning("⚠️ 混合模式需要输入搜索关键词")
-
-    if data_source in {"local", "hybrid"} and local_records:
-        st.success(f"✅ 已加载 {len(local_records)} 条本地数据。")
-        for record in local_records:
-            aggregated_news.append({
-                "title": record.get("title", ""),
-                "content": record.get("content", ""),
-                "summary": record.get("summary", ""),
-                "publish_time": record.get("publish_time", ""),
-                "source": record.get("source", "本地数据"),
-                "category": record.get("category", "本地数据"),
-                "link": record.get("url") or record.get("link", "")
-            })
-    elif data_source in {"local", "hybrid"} and not local_records:
-        st.warning("⚠️ 未检测到本地数据，请先上传表格或选择在线采集。")
-
-    aggregated_news = deduplicate_news(aggregated_news)
-
-    if len(aggregated_news) < 100:
-        st.warning(f"当前仅获取 {len(aggregated_news)} 条新闻，为提高分析可靠性建议扩展数据来源或更换关键词。")
-
-    if not aggregated_news:
-        st.error("❌ 没有可用的数据，终止分析流程。")
-        return
-
-    with st.spinner("正在清洗数据..."):
-        cleaner = DataCleaner()
-        cleaned_news = cleaner.clean_news_batch(aggregated_news)
-        cleaner.save_cleaned_data(cleaned_news)
-        st.success(f"✅ 已清洗 {len(cleaned_news)} 条新闻数据！")
-
-    if not cleaned_news:
-        st.error("❌ 清洗后没有可用的数据。")
-        return
-
-    with st.spinner("正在进行情绪分析..."):
-        sentiment_analyzer = SentimentAnalyzer()
-        analyzed_news = sentiment_analyzer.analyze_news_batch(cleaned_news)
-        sentiment_summary = sentiment_analyzer.get_sentiment_summary(analyzed_news)
-        sentiment_analyzer.save_analysis_results(analyzed_news, sentiment_summary)
-        st.success(f"✅ 情绪分析完成！平均情绪得分: {sentiment_summary['avg_sentiment']}")
-
-    with st.spinner("正在进行趋势预测..."):
-        trend_predictor = TrendPredictor()
-        trend_results = trend_predictor.analyze_market_sentiment_trend(analyzed_news)
-        trend_summary = trend_predictor.get_trend_summary(trend_results)
-        if 'error' not in trend_results:
-            trend_predictor.save_prediction_results(trend_results)
-        st.success(f"✅ 趋势预测完成！趋势方向: {trend_summary.get('trend_direction', 'unknown')}")
-
-    ai_client = build_ai_client(ai_config)
-    ai_scores: List[float] = []
-    if ai_client.provider != "none":
-        with st.spinner("正在进行AI增强分析..."):
-            texts = [
-                (news.get('original_title') or news.get('title', '')) + " " +
-                (news.get('original_content') or news.get('content', ''))
-                for news in cleaned_news[:100]
-            ]
-            try:
-                ai_scores = ai_client.classify_sentiment(texts)
-                for item, score in zip(analyzed_news, ai_scores):
-                    item['ai_sentiment_score'] = score
-                st.success(f"✅ AI分析完成！分析了 {len(ai_scores)} 条文本")
-            except Exception as exc:
-                st.warning(f"AI分析失败：{exc}")
-
-    chart_paths = generate_chart_assets(analyzed_news, trend_results)
-
-    st.session_state["news"] = aggregated_news
-    st.session_state["cleaned_news"] = cleaned_news
-    st.session_state["sentiment_results"] = analyzed_news
-    st.session_state["sentiment_summary"] = sentiment_summary
-    st.session_state["trend_results"] = trend_results
-    st.session_state["trend_summary"] = trend_summary
-    st.session_state["chart_paths"] = chart_paths
-    st.session_state["ai_summary"] = ai_client.generate_insights(sentiment_summary, trend_summary)
-    st.session_state["data_source"] = data_source
-    st.session_state["selected_categories"] = selected_categories
-    st.session_state["local_data_preview"] = local_preview.head(20) if isinstance(local_preview, pd.DataFrame) else None
-    st.session_state["generated_pdf_path"] = ""
-    st.session_state["generated_docx_path"] = ""
-
-    st.success("🎉 分析完成！结果已保存到 results/ 文件夹")
-```
-
-**关键代码解析：**
-1. **状态初始化（第 15-25 行）**：通过 `st.session_state.setdefault` 预置缓存槽位，保证多次迭代运行时状态一致。
-2. **动态数据采集（第 29-72 行）**：依据 `data_source` 分支调用 `NewsCollector`、`CustomSearchCollector` 或本地导入逻辑，实现线上、关键词与混合模式的统一编排。
-3. **数据质量控制（第 74-93 行）**：`deduplicate_news()` 负责跨来源去重，同时在样本量不足时给出提醒，确保实验统计的可靠性。
-4. **分阶段建模（第 95-133 行）**：依次调用 `DataCleaner`、`SentimentAnalyzer` 与 `TrendPredictor`，并在失败时即时终止，为后续实验提供可解释的断点。
-5. **AI 增强分析（第 135-156 行）**：使用 `AIClient` 按需补充深度模型得分，并注入到 `analyzed_news` 中，为实验提供多模型对照。
-6. **结果持久化与可视化（第 158-172 行）**：`generate_chart_assets()` 导出图表，`session_state` 中集中缓存情绪与趋势摘要，为仪表盘与报告模块奠定数据基础。
-
-### 3.2 实验结果
-为验证上述实现的有效性，我们构建了两组实验：
-
-1. **实验 A：RSS 默认类别采集**
-   - 数据集：通过 `NewsCollector` 采集科技、金融、国际、股票四类新闻 162 条。
-   - 指标表现：
-     - 清洗后有效样本 154 条，情绪均值 `0.137`，正/负/中性比例为 `62/41/51`。
-     - Prophet 模型训练成功，预测未来 30 天情绪趋势为正向，置信度 `0.74`。
-     - AI 补充 80 条文本的辅助评分，均值 `0.121`，与融合模型结果保持一致性。
-
-2. **实验 B：混合模式（关键词“生成式 AI” + 本地企业季报）**
-   - 数据集：`CustomSearchCollector` 返回 118 条，外加本地上传季报摘要 45 条，合计 163 条，去重后 149 条。
-   - 对比分析：
-     - 情绪均值下降至 `-0.052`，负向新闻占比从 26.6% 提升至 38.3%，显示企业财报对整体情绪的拉低作用。
-     - Prophet 在数据不足时回退至线性基线模型，预测趋势为轻微负向，置信度 `0.41`。
-     - AI 辅助评分均值 `-0.047`，与融合模型一致，证明回退策略仍能保持判别稳定性。
-
-实验过程中生成的情绪分布、时间线、趋势预测与热力图均可在 Streamlit 仪表盘实时查看，并以 PNG 形式保存在 `results/charts`，PDF 报告中亦同步嵌入上述结果，便于学术交流与项目存档。
-
-### 3.3 实验结论
-综合两轮实验可知，所设计的多源采集与多模型融合框架能够稳定地产生高质量情绪指数，并在样本不足时依托基线模型维持可解释性。实验 B 的混合模式验证了系统对异构数据的兼容能力：即便外部舆情与内部财报的情绪方向出现偏离，管线依旧能快速收敛并给出明确的置信度提示。总体而言，本实现满足研究生阶段对市场情绪研究的严谨性要求，可作为后续扩展（例如引入事件驱动回测、细分行业对比）的坚实基础。
+通过上述多层协同，系统能够在复杂多变的市场资讯环境中持续稳定地输出高质量情绪指标，并以图文形式助力研究者开展深入分析。

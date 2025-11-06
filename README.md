@@ -45,7 +45,7 @@ MarketPulse 是一个围绕 Streamlit 构建的市场资讯分析模型项目，
    ```bash
    pip install -r MarketPulse/requirements.txt
    ```
-   > 依赖中包含 prophet、torch 等科学计算/深度学习库，首次安装可能需要额外的系统环境或更长时间。如仅需基础功能，可根据需求裁剪 `requirements.txt`。
+   > 依赖中包含 prophet、torch 等科学计算/深度学习库，首次安装可能需要额外的系统环境或更长时间。如仅需基础功能，可根据需求更改 `requirements.txt`。
 
 4. **启动 Streamlit 应用**
    ```bash

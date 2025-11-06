@@ -72,22 +72,11 @@ MarketPulse 是一个围绕 Streamlit 构建的市场资讯分析模型项目，
 - 清洗后的结果会写入 `data/processed/`，日志与可视化资源会进入 `results/` 目录。
 - 报告导出功能支持 PDF 与 DOCX 两种格式，文件保存在 `results/reports/` 下。
 
-## 模块简介
-
-- **采集 (`src/collect/`)**：程序集成 RSS 抽取、DuckDuckGo 搜索与简单的去重策略。
-- **预处理 (`src/preprocess/`)**：执行字段标准化、文本清洗、重复检测等操作。
-- **情绪分析 (`src/analysis/`)**：融合词典、SnowNLP、TextBlob 等模型输出情绪分值与置信度。
-- **趋势预测 (`src/analysis/trend_prediction.py`)**：基于 Prophet 生成时间序列趋势与摘要。
-- **可视化 (`src/visualization/`)**：通过 Plotly 生成分布、时间线、热力图，并在 Streamlit 仪表盘中展示。
-- **报告 (`src/report/`)**：使用 PyMuPDF、python-docx 将分析结果汇总为可分享的报告。
-- **AI 集成 (`src/ai_integration.py`)**：封装情绪分类与洞察生成的接口，支持关闭或切换至自定义服务。
-
 ## 常见问题
 
 - **安装 prophet/torch 失败**：请参考官方文档安装 C++/Fortran 编译环境或使用已有的深度学习运行时；亦可临时在 `requirements.txt` 中注释相关依赖。
 - **未获取到在线新闻**：检查本地网络、RSS 源可用性或在界面选择自定义搜索/本地数据。
 - **生成报告失败**：确认已创建 `results/` 目录并具备写入权限，同时检查 PyMuPDF、python-docx 是否正确安装。
-
 
 
 如果这个项目对你有所启发，欢迎点亮 ⭐️ 支持！

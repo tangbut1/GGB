@@ -4,6 +4,7 @@
 
 ![Python Version](https://img.shields.io/badge/python-3.9%2B-blue)
 ![Flask](https://img.shields.io/badge/framework-Flask-green)
+![Streamlit](https://img.shields.io/badge/dev--tools-Streamlit-red)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 ---
@@ -50,6 +51,22 @@ CollectAgent                   SentimentAgent                    TrendAgent
 - **实时推流**：Flask-SocketIO 将论坛讨论实时推送前端面板
 - **交互式导出**：生成含 Chart.js + vis-network 的独立 HTML 报告
 - **追问功能**：AI 解读 Tab 内任意洞察卡片可展开详情并触发 SSE 流式追问
+
+---
+
+## 界面预览
+
+> 启动后浏览器打开 `http://localhost:5050` 可看到完整界面。以下截图展示了系统的主要功能模块：
+
+| 模块 | 说明 |
+|------|------|
+| 左侧面板 | Agent 状态指示 + 实时日志流 + 关键词输入 |
+| 概览 Tab | 舆情摘要 + 情感四维指标卡片 |
+| 数据图表 Tab | 饼图 + 折线图 + 柱状图 + 堆叠图 |
+| 事件关系图 Tab | 因果层级有向图谱，支持主线/时间/平台/全景四种视图 |
+| AI 解读 Tab | 洞察卡片（置信度条 + 反共识标签 + 追问）+ 多智能体辩论时间线 |
+
+> 📸 截图请替换为实际运行截图，放在 `MarketPulse/assets/` 目录下
 
 ---
 
@@ -309,10 +326,10 @@ GGB/
 cd MarketPulse
 
 # 测试 CollectAgent 数据采集
-python3 test_agents.py
+python3 tests/test_agents.py
 
 # 测试论坛 Monitor 与 HOST 触发机制
-python3 test_forum.py
+python3 tests/test_forum.py
 ```
 
 ---
@@ -329,10 +346,39 @@ python3 test_forum.py
 
 ## 常见问题
 
-- **安装 prophet/torch 失败**：请参考官方文档安装编译环境，或临时在 `requirements.txt` 中注释相关依赖
-- **未获取到在线新闻**：检查网络连接，Google News RSS / DuckDuckGo / Bing News 可能受地域限制
-- **LLM 调用报错**：检查 `.env` 中 API Key 是否正确，以及 base_url 是否可访问
-- **AI 解读空白**：LLM 未按 JSON 格式输出时，系统有 Markdown 结构兜底解析，如仍失败请检查 API Key 余额
+<details>
+<summary><strong>安装 Prophet 失败（报错 pystan / C++ 编译错误）</strong></summary>
+
+Prophet 依赖 `pystan`，需要 C++ 编译环境。macOS 上先安装：
+```bash
+brew install gcc
+```
+Windows 上安装 Visual Studio Build Tools。如果不需要趋势预测功能，可在 `requirements.txt` 中注释 `prophet` 行。
+</details>
+
+<details>
+<summary><strong>安装 PyTorch 太慢或失败</strong></summary>
+
+`requirements.txt` 中的 torch 依赖带有平台条件（`platform_system!="Windows"`），macOS/Linux 会安装完整版。如果只需要基础功能，可注释掉 `torch`、`torchaudio`、`torchvision` 三行。
+</details>
+
+<details>
+<summary><strong>启动后未获取到在线新闻</strong></summary>
+
+系统使用 Google News RSS → DuckDuckGo → Bing News → NewsAPI 四层回退。国内网络环境下 Google News RSS 可能不可用，系统会自动降级到 Bing/DDG。如果所有源均失效，系统会使用模拟数据继续流程。
+</details>
+
+<details>
+<summary><strong>AI 解读 Tab 没有显示洞察卡片</strong></summary>
+
+LLM 可能未按 JSON 格式输出。系统有 5 级兜底解析（代码块剥离 → 直接解析 → 大括号提取 → 正则 → Markdown 结构解析），如果全部失败会回退到模拟数据展示。检查 API Key 余额和网络连通性。
+</details>
+
+<details>
+<summary><strong>事件关系图所有关系都显示"关联"</strong></summary>
+
+需要后端 EventExtractor 正常提取因果层级后，才会出现触发/激化/引发等有向边类型。如果采集数据量过少或全部来自同一时间段，层级差异不明显时会回退到基础关联模式。确保采集量 ≥ 50 条且时间跨度 > 1 天。
+</details>
 
 ---
 

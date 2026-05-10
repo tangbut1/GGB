@@ -1,82 +1,339 @@
-# MarketPulse 市场情绪分析模型
+# MarketPulse v4 — 多智能体论坛舆情分析系统
 
-MarketPulse 是一个围绕 Streamlit 构建的市场资讯分析模型项目，目标是探索从新闻采集、数据清洗、情绪分析、趋势预测到可视化与报告导出的完整流程。项目聚焦于方法论与代码结构，方便二次开发和实验验证。
+基于 BettaFish 架构理念升级的多智能体协作系统。五个独立 Agent（Collect / Sentiment / Trend / Report / Host）通过中央论坛日志（forum.log）模拟圆桌辩论，LLM Host 定期总结并指出分析盲区，驱动各 Agent 在迭代中不断完善结论。
+
+![Python Version](https://img.shields.io/badge/python-3.9%2B-blue)
+![Flask](https://img.shields.io/badge/framework-Flask-green)
+![License](https://img.shields.io/badge/license-MIT-green)
+
+---
+
+## 架构流程
+
+```
+用户输入关键词 → Flask 主控 → OrchestratorAgent 流水线调度
+                                    │
+    ┌───────────────────────────────┼───────────────────────────────┐
+    ▼                               ▼                               ▼
+CollectAgent                   SentimentAgent                    TrendAgent
+数据采集与清洗                  SnowNLP + LLM 校正情感分析        Prophet 时序预测
+    │                               │                               │
+    └───────────┬───────────────────┴───────────┬───────────────────┘
+                │                               │
+                ▼                               ▼
+           forum.log ◄── Monitor 守护线程 ──► LLM Host
+          (Agent 写入发现)    (达到阈值触发)    (总结 + 盲区引导)
+                │                               │
+                └───────────┬───────────────────┘
+                            ▼
+                      ReportAgent
+                   HTML 报告 + 事件图谱 + AI 解读
+```
+
+### 五轮迭代流程
+
+| Round | 内容 |
+|-------|------|
+| Round 1 | CollectAgent 采集 → SentimentAgent 情感分析 → TrendAgent 趋势预测 → HOST 总结 & 盲区引导 |
+| Round 2 | SentimentAgent + TrendAgent 根据 HOST 盲区引导深入分析 → HOST 综合研判 |
+| 报告 | ReportAgent 定稿 → 生成交互式 HTML 报告 + 事件关系图谱 + AI 洞察卡片 |
+
+---
+
+## 核心特性
+
+- **5 Agent 解耦**：采集、情感、趋势、报告、主持人各自独立 LLM 配置
+- **论坛辩论机制**：Agent 把关键发现写入 forum.log，Monitor 守护线程在达到阈值（Agent 消息 ≥ 5 条或 15 秒无新消息）时触发 Host 介入
+- **LLM 情感校正**：SnowNLP 对中文财经/政治文本存在正向偏置，SentimentAgent 通过 LLM 输出 JSON 校正情感分布，确保负面率真实反映舆情
+- **因果层级图谱**：EventExtractor 按因果层级（起因/发展/影响）构建有向事件关系图，支持触发/激化/引发/关联四种边类型
+- **模型异构**：config.yaml + .env 支持每个 Agent 配置不同的大模型（OpenAI 兼容接口），也可通过全局变量一键切换
+- **实时推流**：Flask-SocketIO 将论坛讨论实时推送前端面板
+- **交互式导出**：生成含 Chart.js + vis-network 的独立 HTML 报告
+- **追问功能**：AI 解读 Tab 内任意洞察卡片可展开详情并触发 SSE 流式追问
+
+---
+
+## 快速启动
+
+### 1. 克隆项目
+
+```bash
+git clone https://github.com/tangbut1/GGB.git
+cd GGB
+```
+
+### 2. 安装依赖
+
+```bash
+pip install -r MarketPulse/requirements.txt
+```
+
+### 3. 配置 API Key
+
+```bash
+cp MarketPulse/.env.example MarketPulse/.env
+```
+
+编辑 `MarketPulse/.env`，将 5 个 Agent 的 `sk-xxx` 替换为真实 API Key：
+
+```bash
+# CollectAgent - 数据采集与清洗
+MP_COLLECT_AGENT_API_KEY=sk-your-real-key
+
+# SentimentAgent - 情感分析
+MP_SENTIMENT_AGENT_API_KEY=sk-your-real-key
+
+# TrendAgent - 趋势预测
+MP_TREND_AGENT_API_KEY=sk-your-real-key
+
+# ReportAgent - 报告生成
+MP_REPORT_AGENT_API_KEY=sk-your-real-key
+
+# Forum Host - 论坛主持人
+MP_FORUM_HOST_API_KEY=sk-your-real-key
+```
+
+**全局一键切换模型**（可选）：如需切换到其他兼容 OpenAI 协议的模型（如 GPT-4o、Claude、Qwen），在 `.env` 中取消注释并配置：
+
+```bash
+MP_GLOBAL_BASE_URL=https://api.openai.com/v1
+MP_GLOBAL_MODEL=gpt-4o
+```
+
+也可以针对单个 Agent 精准覆盖：
+
+```bash
+MP_SENTIMENT_AGENT_MODEL=deepseek-v4-pro    # 仅情感分析用 Pro 模型
+MP_TREND_AGENT_BASE_URL=https://api.openai.com/v1  # 仅趋势预测换接口
+```
+
+### 4. 启动服务
+
+**macOS / Linux：**
+```bash
+cd MarketPulse
+bash start.sh
+```
+
+**Windows：**
+```cmd
+cd MarketPulse
+start.bat
+```
+
+**或直接用 Flask：**
+```bash
+cd MarketPulse
+python3 -m flask run --host=0.0.0.0 --port=5050
+```
+
+浏览器打开 **http://localhost:5050** 即可使用。
+
+---
+
+## 配置体系
+
+### 覆盖优先级（由高到低）
+
+```
+环境变量单 Agent 覆盖 (MP_COLLECT_AGENT_MODEL)
+  → 环境变量全局覆盖 (MP_GLOBAL_MODEL)
+    → config.yaml 默认值
+```
+
+### config.yaml 关键配置
+
+```yaml
+agent_llm:
+  collect_agent:
+    base_url: "https://api.deepseek.com/v1"
+    model: "deepseek-v4-flash"
+  # ... 其余 Agent 同理
+
+analysis:
+  use_prophet: true        # Prophet 时序预测
+  forecast_periods: 30     # 默认预测 30 天
+
+collect:
+  max_results:
+    social: 500             # 社交媒体模式目标采集量
+    news: 300               # 新闻媒体模式目标采集量
+  min_results:
+    social: 300
+    news: 200
+  time_distribution:        # 采集时间分布配比
+    recent_7d: 0.30
+    week_8_30d: 0.40
+    month_31_90d: 0.30
+```
+
+### 环境变量完整列表
+
+| 变量 | 说明 |
+|------|------|
+| `MP_COLLECT_AGENT_API_KEY` | 采集 Agent API Key |
+| `MP_SENTIMENT_AGENT_API_KEY` | 情感 Agent API Key |
+| `MP_TREND_AGENT_API_KEY` | 趋势 Agent API Key |
+| `MP_REPORT_AGENT_API_KEY` | 报告 Agent API Key |
+| `MP_FORUM_HOST_API_KEY` | 论坛主持人 API Key |
+| `MP_GLOBAL_BASE_URL` | 全局 API 地址覆盖 |
+| `MP_GLOBAL_MODEL` | 全局模型名覆盖 |
+| `MP_{AGENT}_MODEL` | 单 Agent 模型覆盖（如 `MP_SENTIMENT_AGENT_MODEL`） |
+| `MP_{AGENT}_BASE_URL` | 单 Agent API 地址覆盖 |
+| `NEWSAPI_KEY` | 备用 NewsAPI 源（可选） |
+| `SECRET_KEY` | Flask Session 密钥 |
+
+---
+
+## 使用指南
+
+### 选择数据源模式
+
+- **社交媒体模式**：采集微博、抖音、小红书、知乎、X/Twitter 等平台的公开讨论，适合分析品牌口碑、产品情绪、热点事件
+- **新闻媒体模式**：采集 Google News、Bing News、财经媒体等专业报道，适合分析政策影响、行业趋势、机构观点
+
+### 本地文件上传
+
+支持拖拽上传 CSV、TSV、Excel、JSON 文件，后端会自动解析并与线上采集数据融合分析。
+
+### 查看分析结果
+
+分析完成后，右侧面板提供四个 Tab：
+
+| Tab | 内容 |
+|-----|------|
+| **概览** | 舆情摘要、情感指标卡片（正面/负面/采集量/综合分）、关键词标签 |
+| **数据图表** | 情感分布饼图、30天情感走势折线图、多平台采集量柱状图、各平台情感堆叠图 |
+| **事件关系图** | 因果层级有向图谱（起因→发展→影响），支持主线/时间/平台/全景四种视图，节点详情面板 + 负面链路高亮 |
+| **AI 解读** | 核心判断卡（action_signal 徽章）、洞察卡片流（置信度进度条 + 反共识标签 + 展开详情 + 追问）、数据盲区、多智能体论坛辩论时间线 |
+
+### 追问功能
+
+在 AI 解读 Tab 展开任意洞察卡片，点击"深挖原因"、"质疑这个判断"、"给出可执行建议"或输入自定义追问，弹窗内 SSE 流式返回 AI 回复。
+
+### 导出报告
+
+点击底部"下载 HTML 报告"生成含 Chart.js 图表的独立 HTML 文件，也可导出 PDF / Word 格式。
+
+---
+
+## API 端点
+
+| 路由 | 方法 | 说明 |
+|------|------|------|
+| `/` | GET | 主界面 |
+| `/analyze` | POST | 提交分析任务 |
+| `/stream/<task_id>` | GET | SSE 实时日志流 |
+| `/report/<task_id>` | GET | 下载 HTML 报告 |
+| `/status` | GET | 各 Agent 配置状态 |
+| `/history` | GET | 最近 50 条任务历史 |
+| `/followup` | POST | SSE 流式 AI 解读追问 |
+
+### `/analyze` 请求体
+
+```json
+{
+  "keyword": "华为",
+  "srcMode": "social",
+  "local_data": [],
+  "local_data_raw_files": []
+}
+```
+
+---
 
 ## 项目结构
 
-```text
-.
-├── README.md
+```
+GGB/
+├── README.md                   # 本文件
 └── MarketPulse/
-    ├── assets/              # 静态资源（Logo、样式等）
-    ├── data/                # 示例数据：raw/ 与 processed/
-    ├── docs/                # 设计与说明文档草稿
-    ├── results/             # 运行产物（图表、日志、报告），默认忽略版本控制
-    ├── main.py              # Streamlit 应用入口
-    ├── requirements.txt     # 所需 Python 依赖
-    └── src/
-        ├── analysis/        # 情绪分析、趋势预测等逻辑
-        ├── collect/         # RSS/自定义搜索采集器
-        ├── data/            # 本地数据加载工具
-        ├── preprocess/      # 数据清洗与去重
-        ├── report/          # PDF/DOCX 报告生成
-        ├── visualization/   # 图表生成与仪表盘展示
-        └── ai_integration.py# AI 服务封装
+    ├── app.py                  # Flask 主控 + SocketIO + SSE
+    ├── main.py                 # Streamlit 独立 Agent 测试入口
+    ├── requirements.txt
+    ├── start.sh / start.bat
+    ├── .env.example
+    ├── README.md
+    ├── templates/
+    │   └── index.html          # 前端单页应用 (Chart.js + vis-network)
+    ├── src/
+    │   ├── config.yaml         # LLM 配置 + 采集量 + 分析参数
+    │   ├── agents/
+    │   │   ├── base_agent.py   # Agent 基类 (call_llm + call_llm_with_system)
+    │   │   ├── collect_agent.py    # 数据采集 (多源搜索 + 本地数据融合)
+    │   │   ├── sentiment_agent.py  # 情感分析 (SnowNLP + LLM 校正)
+    │   │   ├── trend_agent.py      # 趋势预测 (Prophet + 数据质量评级)
+    │   │   ├── report_agent.py     # 报告生成 + AI 解读 + 论坛辩论提取
+    │   │   └── orchestrator.py     # 流水线调度 (5 阶段 + 2 轮迭代)
+    │   ├── collect/
+    │   │   └── custom_search.py    # 多源搜索 (Google RSS → DDG → Bing → NewsAPI)
+    │   ├── analysis/
+    │   │   ├── sentiment_analysis.py  # SnowNLP + TextBlob + 词典融合打分
+    │   │   ├── trend_prediction.py    # Prophet 时序预测
+    │   │   └── event_extractor.py     # jieba 关键词提取 + 因果层级图谱
+    │   ├── forum/
+    │   │   ├── log_manager.py    # forum.log 读写 + 线程安全
+    │   │   ├── monitor.py        # 守护线程 (阈值触发 HOST)
+    │   │   └── llm_host.py       # HOST LLM 调用
+    │   ├── preprocess/
+    │   │   └── cleaner.py        # 数据清洗 (jieba 分词 + 去停用词)
+    │   ├── report/
+    │   │   ├── export_html.py    # 独立 HTML 报告生成
+    │   │   ├── export_pdf.py     # PDF 导出
+    │   │   └── export_doc.py     # Word 导出
+    │   ├── data/
+    │   │   └── local_loader.py   # 本地上传文件解析 (CSV/XLSX/JSON)
+    │   └── visualization/
+    │       └── charts.py         # Plotly 图表（备用）
+    ├── data/                     # 采集数据缓存
+    ├── results/reports/          # 生成的 HTML 报告
+    └── logs/                     # forum.log 任务日志
 ```
 
-## 快速开始
+---
 
-1. **克隆仓库并进入根目录**
-   ```bash
-   git clone https://github.com/your-username/MarketPulse.git
-   cd MarketPulse
-   ```
+## 测试
 
-2. **创建并激活虚拟环境**（建议使用 Python 3.9+）
-   ```bash
-   python -m venv .venv
-   # Windows
-   .venv\Scripts\activate
-   # macOS / Linux
-   source .venv/bin/activate
-   ```
+### 全流程测试
 
-3. **安装依赖**（从应用目录读取）
-   ```bash
-   pip install -r MarketPulse/requirements.txt
-   ```
-   > 依赖中包含 prophet、torch 等科学计算/深度学习库，首次安装可能需要额外的系统环境或更长时间。如仅需基础功能，可根据需求更改 `requirements.txt`。
+1. 启动服务后访问 `http://localhost:5050/status` 确认 5 个 Agent 均为 `configured: true`
+2. 选择数据源模式（社交媒体 / 新闻媒体），输入关键词，点击"开始分析"
+3. 观察左侧 Agent 状态依次变为 active → done，日志区实时滚动
+4. 任务完成后四个 Tab 依次检查：概览 / 数据图表 / 事件关系图 / AI 解读
+5. 在 AI 解读 Tab 展开任意洞察卡片，点击追问按钮验证流式追问
+6. 点击"下载 HTML 报告"验证离线报告
 
-4. **启动 Streamlit 应用**
-   ```bash
-   streamlit run MarketPulse/main.py
-   ```
-   或者先进入应用目录再运行：
-   ```bash
-   cd MarketPulse
-   streamlit run main.py
-   ```
+### 独立 Agent 测试
 
-5. **访问应用**：默认浏览器中打开 `http://localhost:8501`。
+```bash
+cd MarketPulse
 
-## 配置与自定义
+# 测试 CollectAgent 数据采集
+python3 test_agents.py
 
-- 所有基础配置集中在 `src/config.yaml` 中，可调整采集源、默认分类、AI 供应商等参数。
-- Streamlit 页面支持选择「在线新闻」「自定义关键词搜索」「本地表格数据」等多种数据来源，混合模式可同时结合自定义搜索与本地上传数据。
-- `src/ai_integration.py` 提供了 OpenAI、HuggingFace 等服务的统一封装，如需实际调用请在环境变量或配置文件中写入 API Key。
-- `docs/` 目录包含设计思路与使用手册草稿，可作为扩展功能的起点。
+# 测试论坛 Monitor 与 HOST 触发机制
+python3 test_forum.py
+```
 
-## 数据与输出
+---
 
-- `data/raw/` 内附示例 JSON，可用于离线体验数据清洗与情绪分析流程。上传自己的 CSV/Excel 数据亦可通过界面解析。
-- 清洗后的结果会写入 `data/processed/`，日志与可视化资源会进入 `results/` 目录。
-- 报告导出功能支持 PDF 与 DOCX 两种格式，文件保存在 `results/reports/` 下。
+## 技术栈
+
+- **后端**：Python 3.9+ / Flask / Flask-SocketIO / PyYAML
+- **前端**：Vanilla JS / Chart.js 4.4 / vis-network / SSE
+- **NLP**：SnowNLP / TextBlob / jieba 分词
+- **时序预测**：Prophet
+- **LLM**：OpenAI 兼容接口（DeepSeek / GPT-4o / Claude / Qwen 等均可）
+
+---
 
 ## 常见问题
 
-- **安装 prophet/torch 失败**：请参考官方文档安装 C++/Fortran 编译环境或使用已有的深度学习运行时；亦可临时在 `requirements.txt` 中注释相关依赖。
-- **未获取到在线新闻**：检查本地网络、RSS 源可用性或在界面选择自定义搜索/本地数据。
-- **生成报告失败**：确认已创建 `results/` 目录并具备写入权限，同时检查 PyMuPDF、python-docx 是否正确安装。
+- **安装 prophet/torch 失败**：请参考官方文档安装编译环境，或临时在 `requirements.txt` 中注释相关依赖
+- **未获取到在线新闻**：检查网络连接，Google News RSS / DuckDuckGo / Bing News 可能受地域限制
+- **LLM 调用报错**：检查 `.env` 中 API Key 是否正确，以及 base_url 是否可访问
+- **AI 解读空白**：LLM 未按 JSON 格式输出时，系统有 Markdown 结构兜底解析，如仍失败请检查 API Key 余额
 
+---
 
 如果这个项目对你有所启发，欢迎点亮 ⭐️ 支持！

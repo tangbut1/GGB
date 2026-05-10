@@ -20,10 +20,19 @@ venv/
 # 数据与输出
 data/
 results/
+logs/
 *.csv
 *.xlsx
 *.json
 *.db
+*.png
+*.jpg
+*.pdf
+*.docx
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
 
 # 构建与打包文件
 build/

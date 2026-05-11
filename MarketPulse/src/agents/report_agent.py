@@ -67,6 +67,11 @@ class ReportAgent(BaseAgent):
         ai_insights["forum_debate"] = forum_debate
         report_data["ai_insights"] = ai_insights
 
+        # 生成结构化 debate_cards（供前端辩论区直接渲染）
+        debate_cards = self._generate_debate_cards(forum_log, sentiment_summary, trend_summary)
+        report_data["debate_cards"] = debate_cards
+        ai_insights["debate_cards"] = debate_cards
+
         return {
             "status": "success",
             "agent": self.name,
@@ -162,6 +167,159 @@ class ReportAgent(BaseAgent):
         }.get(e["agent"], 5)))
 
         return debate_entries
+
+    @staticmethod
+    def _generate_debate_cards(forum_log: list, sentiment_summary: dict, trend_summary: dict) -> list:
+        """从 forum.log 生成结构化辩论卡片，过滤过程日志，按 agent+round 合并，heuristic 生成 summary + highlights"""
+        if not forum_log:
+            return []
+
+        agent_pattern = re.compile(
+            r'\[[\d\-:\s]+\]\s*\[(HOST|CollectAgent|SentimentAgent|TrendAgent|ReportAgent)\]\s*\[Round\s*(\d+)\]\s*(.+)'
+        )
+
+        # ── Step A: 解析 ──
+        entries = []
+        for line in forum_log:
+            line = line.strip()
+            if not line or "--- Forum Log" in line:
+                continue
+            m = agent_pattern.match(line)
+            if not m:
+                continue
+            agent, round_num, content = m.group(1), int(m.group(2)), m.group(3).strip()
+            if len(content) < 5:
+                continue
+            entries.append({"agent": agent, "round": round_num, "content": content})
+
+        # ── Step B: 过滤过程日志 ──
+        process_kw = ["补充词", "新数据", "采集完成", "开始采集", "搜索完成",
+                      "已采集", "源返回", "共获得", "搜索关键词", "开始搜索"]
+        def _is_process_log(e):
+            if e["agent"] == "CollectAgent":
+                if any(kw in e["content"] for kw in process_kw):
+                    return True
+            return False
+
+        clean_entries = [e for e in entries if not _is_process_log(e)]
+
+        # ── Step C: 按 agent+round 合并 ──
+        agent_icon_map = {
+            "CollectAgent": "📡", "SentimentAgent": "💬",
+            "TrendAgent": "📈", "ReportAgent": "📄", "HOST": "🧑‍⚖️"
+        }
+        agent_label_map = {
+            "CollectAgent": "采集Agent", "SentimentAgent": "情感Agent",
+            "TrendAgent": "趋势Agent", "ReportAgent": "报告Agent", "HOST": "论坛主持人"
+        }
+        # 排序优先级
+        priority_map = {"HOST": 0, "TrendAgent": 1, "SentimentAgent": 2, "CollectAgent": 3, "ReportAgent": 4}
+
+        grouped = {}
+        for e in clean_entries:
+            key = (e["agent"], e["round"])
+            if key not in grouped:
+                grouped[key] = []
+            grouped[key].append(e)
+
+        cards = []
+        for (agent, rnd), items in sorted(grouped.items(), key=lambda x: (x[0][1], priority_map.get(x[0][0], 9))):
+            if agent == "HOST":
+                # 只取该 round 最后一条 HOST
+                selected = items[-1]
+            elif agent == "CollectAgent":
+                # 优先取结论行（含采集完毕/共获取/有效数据/平台分布/采集完成/共采集/总计）
+                conclusion_kw = ["采集完毕", "共获取", "有效数据", "平台分布", "采集完成", "共采集", "总计"]
+                selected = None
+                for it in items:
+                    if any(kw in it["content"] for kw in conclusion_kw):
+                        selected = it
+                        break
+                if not selected:
+                    selected = max(items, key=lambda it: len(it["content"]))
+            elif agent in ("SentimentAgent", "TrendAgent", "ReportAgent"):
+                # 取该 round 最后一条
+                selected = items[-1]
+            else:
+                selected = items[-1]
+
+            # ── Step D: heuristic summary + highlights ──
+            body = selected["content"]
+            # HOST 盲区提取（复用已有正则）
+            blind_spots = []
+            if agent == "HOST":
+                for m2 in re.finditer(r'@(\w+)\s*[:：]?\s*([^@]+?)(?=@|【|$)', body):
+                    spot = m2.group(2).strip()
+                    if len(spot) > 3:
+                        blind_spots.append(spot)
+                guide_match = re.search(r'【盲区引导】[：:]\s*(.+)', body)
+                if guide_match:
+                    for p in re.split(r'[@\n]', guide_match.group(1)):
+                        p = p.strip()
+                        if len(p) > 3 and p not in blind_spots:
+                            blind_spots.append(p)
+                if not blind_spots:
+                    concern_kw = ["不足", "风险", "注意", "遗漏", "忽视", "缺失", "待验证", "不确定", "未知"]
+                    for sent in re.split(r'[。；;?\n]', body):
+                        sent = sent.strip()
+                        if len(sent) < 8:
+                            continue
+                        if any(kw in sent for kw in concern_kw):
+                            blind_spots.append(sent[:80])
+                            if len(blind_spots) >= 3:
+                                break
+
+            # 清洗文本用于提取
+            cleaned = re.sub(r'^#{1,6}\s+', '', body, flags=re.MULTILINE)
+            cleaned = re.sub(r'\*{1,3}(.*?)\*{1,3}', r'\1', cleaned)
+
+            # summary: 第一句非空话的完整句子
+            bland_prefixes = ["以下是基于", "趋势综述", "以下为", "综合分析", "基于以上", "综合来看",
+                              "总体而言", "据分析", "根据当前", "据此"]
+            summary = ""
+            sentences = re.split(r'[。！？]', cleaned)
+            for s in sentences:
+                s = s.strip()
+                if len(s) < 8:
+                    continue
+                if any(s.startswith(bp) for bp in bland_prefixes):
+                    continue
+                if re.match(r'^[\d#\*\s]+', s):
+                    continue
+                summary = s[:60]
+                break
+            if not summary:
+                summary = cleaned[:60]
+
+            # highlights: 2-3 条质量句子
+            highlights = []
+            for s in sentences:
+                s = s.strip()
+                if len(s) < 15:
+                    continue
+                if re.match(r'^[\d#\*\s\-]+', s):
+                    continue
+                if any(s.startswith(bp) for bp in bland_prefixes):
+                    continue
+                if s == summary:
+                    continue
+                highlights.append(s[:80])
+                if len(highlights) >= 3:
+                    break
+
+            cards.append({
+                "agent": agent,
+                "agent_label": agent_label_map.get(agent, agent),
+                "agent_icon": agent_icon_map.get(agent, "📋"),
+                "round": rnd,
+                "summary": summary,
+                "highlights": highlights,
+                "full_text": cleaned[:500],
+                "blind_spots": blind_spots,
+                "priority": priority_map.get(agent, 9),
+            })
+
+        return cards
 
     @staticmethod
     def _pick_opinionated_sentence(content: str) -> str:

@@ -2261,6 +2261,9 @@ function graphGetVisibleEdges(mode) {
     // 存储供 graphBuildNetwork 使用
     graphMainlineNodeIds = mainlineSet;
     return d.edges.filter(function(e){
+      // 主线模式：只展示 trigger/escalate/cause 强因果边，隐藏 relate/weak
+      var edgeType = e.type || e.rel || '';
+      if (edgeType === 'relate' || edgeType === 'weak') return false;
       return mainlineSet[e.from] && mainlineSet[e.to];
     }).map(function(e){
       var w = e.weight || 1;
@@ -2289,7 +2292,7 @@ function graphComputeMainlinePath(nodes, edges) {
   var bestPath = [];
   function dfs(current, path, visited) {
     if (path.length > bestPath.length) bestPath = path.slice();
-    if (bestPath.length >= 8) return; // 最多 8 个节点
+    if (bestPath.length >= 6) return; // 主线最多 6 个节点
     var nexts = adj[current] || [];
     for (var i=0; i<nexts.length; i++) {
       var nxt = nexts[i];
@@ -2780,7 +2783,7 @@ function renderAIInsightsCard(ai, kw) {
   // 论坛辩论时间线
   var debateContainer = document.getElementById('forumDebateSection');
   if (debateContainer) {
-    var debateData = ai.forum_debate || (currentData && currentData.forum_debate) || [];
+    var debateData = ai.debate_cards || ai.forum_debate || (currentData && currentData.debate_cards) || (currentData && currentData.forum_debate) || [];
     if (debateData.length > 0) {
       debateContainer.innerHTML = renderForumDebateTimeline(debateData);
       debateContainer.style.display = 'block';
@@ -2793,159 +2796,63 @@ function renderAIInsightsCard(ai, kw) {
   if (fuEl) fuEl.style.display = 'block';
 }
 
-// ═══════════════ DEBATE TEXT CLEANING ═══════════════
-function cleanAgentSummary(text) {
-  if (!text) return {summary:'', body:''};
-  var t = text.replace(/\\n/g, '\n').replace(/\\t/g, ' ');
 
-  // Step 2: strip markdown heading symbols
-  t = t.replace(/^#{1,6}\s+/gm, '');
-  // Step 3: strip table separator rows
-  t = t.replace(/^\|[\-|:\s]+\|$/gm, '');
-  // Step 4: strip bold/italic markers
-  t = t.replace(/\*{1,3}(.*?)\*{1,3}/g, '$1');
-  // Step 5: collapse multiple blank lines
-  t = t.replace(/\n{3,}/g, '\n\n');
 
-  var body = t.trim();
+function renderForumDebateTimeline(cards) {
+  if (!cards || !cards.length) return '';
 
-  // Step 6: extract first complete sentence as summary
-  var summary = '';
-  var m = body.match(/^[^。！？.!?]*[。！？.!?]/);
-  if (m) {
-    summary = m[0].trim();
-  } else if (body.length > 0) {
-    // Step 7: truncate to 80 chars at punctuation boundary
-    summary = body.substring(0, 80);
-    var lastPunc = Math.max(summary.lastIndexOf('\u3002'), summary.lastIndexOf('\uff01'),
-      summary.lastIndexOf('\uff1f'), summary.lastIndexOf('.'), summary.lastIndexOf('!'), summary.lastIndexOf('?'));
-    if (lastPunc > 30) summary = summary.substring(0, lastPunc + 1);
-  }
-  return {summary: summary, body: body};
-}
-
-function extractKeyFindings(text) {
-  if (!text) return [];
-  // Split by newlines, bullet markers, or numbered items
-  var lines = text.split(/\n+/).filter(function(l){
-    l = l.trim();
-    return l.length > 10 && !/^(综合|总体|整体|根据|基于|据此|综上)/.test(l);
-  });
-  // Take first 3 meaningful lines
-  return lines.slice(0, 3).map(function(l){
-    // Strip leading bullet/number markers
-    l = l.replace(/^[\-\*\d+\.\s]+/, '').trim();
-    return l.substring(0, 80);
-  });
-}
-
-function renderMarkdownMinimal(text) {
-  if (!text) return '';
-  var html = escHtml(text);
-  // Convert **text** to <strong>
-  html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
-  // Convert paragraphs (double newline)
-  var paras = html.split(/\n\n+/);
-  return paras.map(function(p){
-    p = p.trim();
-    if (!p) return '';
-    // Convert - item at line start to <li>
-    if (/^[-\*]\s/.test(p)) {
-      var items = p.split(/\n/).filter(function(l){ return l.trim(); });
-      return '<ul>' + items.map(function(li){
-        return '<li>' + li.replace(/^[-\*]\s/, '') + '</li>';
-      }).join('') + '</ul>';
-    }
-    return '<p>' + p.replace(/\n/g, '<br>') + '</p>';
-  }).join('');
-}
-
-function renderForumDebateTimeline(debate) {
-  if (!debate || !debate.length) return '';
-
-  var AGENT_CFG = {
-    HOST:           { color: '#6366f1', icon: '\ud83e\uddd1\u200d\u2696\ufe0f', label: '论坛主持人' },
-    CollectAgent:   { color: '#10b981', icon: '\ud83d\udce1', label: '采集Agent' },
-    SentimentAgent: { color: '#f59e0b', icon: '\ud83d\udcac', label: '情感Agent' },
-    TrendAgent:     { color: '#3b82f6', icon: '\ud83d\udcc8', label: '趋势Agent' },
-    ReportAgent:    { color: '#8b5cf6', icon: '\ud83d\udcc4', label: '报告Agent' }
+  var AGENT_COLORS = {
+    HOST: '#6366f1', CollectAgent: '#10b981', SentimentAgent: '#f59e0b',
+    TrendAgent: '#3b82f6', ReportAgent: '#8b5cf6'
   };
-
-  // Host dedup: group by round, keep only LAST Host per round
-  var roundHosts = {};
-  debate.forEach(function(item, i) {
-    if (item.agent === 'HOST') {
-      var r = item.round || 1;
-      if (!roundHosts[r] || i > roundHosts[r].idx) roundHosts[r] = {idx: i, item: item};
-    }
-  });
-
-  // Filter: remove earlier HOST entries
-  var deduped = debate.filter(function(item, i) {
-    if (item.agent === 'HOST') {
-      var r = item.round || 1;
-      return roundHosts[r] && roundHosts[r].idx === i;
-    }
-    return true;
-  });
 
   // Group by round
   var rounds = {};
-  deduped.forEach(function(item) {
-    var r = item.round || 1;
+  cards.forEach(function(card) {
+    var r = card.round || 1;
     if (!rounds[r]) rounds[r] = [];
-    rounds[r].push(item);
+    rounds[r].push(card);
   });
 
   var roundOrder = Object.keys(rounds).sort();
   var html = '<div class="dbt-section">';
 
   roundOrder.forEach(function(r) {
-    html += '<div class="dbt-round-header"><span class="dbt-round-num">Round ' + r + '</span> ' +
-      (r == 1 ? '采集 \u2192 情感 \u2192 趋势 \u2192 Host总结' : '深化分析 \u2192 Host综合研判') +
-    '</div>';
+    html += '<div class="dbt-round-header"><span class="dbt-round-num">Round ' + r + '</span></div>';
 
-    var items = rounds[r];
-    // Sort by agent order
-    var agentOrder = {CollectAgent:0, SentimentAgent:1, TrendAgent:2, ReportAgent:3, HOST:4};
-    items.sort(function(a,b){ return (agentOrder[a.agent]||9) - (agentOrder[b.agent]||9); });
+    rounds[r].forEach(function(card, ci) {
+      var color = AGENT_COLORS[card.agent] || '#95a5a6';
+      var cardId = 'dbtCard_' + r + '_' + ci;
 
-    items.forEach(function(item) {
-      var cfg = AGENT_CFG[item.agent] || AGENT_CFG['HOST'];
-      var clean = cleanAgentSummary(item.content || '');
-      var summary = clean.summary;
-      var findings = extractKeyFindings(clean.body);
-      var cardId = 'dbtCard' + r + '_' + item.agent;
-
-      html += '<div class="dbt-card" style="border-left:3px solid ' + cfg.color + '">' +
+      html += '<div class="dbt-card" style="border-left:3px solid ' + color + '">' +
         '<div class="dbt-card-header">' +
-          '<span class="dbt-card-icon">' + cfg.icon + '</span>' +
-          '<span class="dbt-card-agent" style="color:' + cfg.color + '">' + cfg.label + '</span>' +
-          (r == 2 && item.agent !== 'HOST' ? '<span style="font-size:10px;color:var(--tx3);margin-left:4px;">(深化)</span>' : '') +
+          '<span class="dbt-card-icon">' + (card.agent_icon || '') + '</span>' +
+          '<span class="dbt-card-agent" style="color:' + color + '">' + escHtml(card.agent_label || card.agent) + '</span>' +
           '<span class="dbt-card-round">Round ' + r + '</span>' +
         '</div>' +
-        '<div class="dbt-card-summary">' + escHtml(summary) + '</div>';
+        '<div class="dbt-card-summary">' + escHtml(card.summary || '') + '</div>';
 
-      if (findings.length > 0) {
+      if (card.highlights && card.highlights.length > 0) {
         html += '<ul class="dbt-card-findings">' +
-          findings.map(function(f){ return '<li>' + escHtml(f) + '</li>'; }).join('') +
+          card.highlights.map(function(h){ return '<li>' + escHtml(h) + '</li>'; }).join('') +
         '</ul>';
       }
 
-      // Full content (expandable)
-      html += '<div class="dbt-card-foot">' +
-        '<button class="dbt-expand-btn" onclick="var d=document.getElementById(\'' + cardId + '\');var t=this;' +
-          'if(d.style.display===\'none\'||!d.style.display){d.style.display=\'block\';t.textContent=\'收起 \u25b2\';}' +
-          'else{d.style.display=\'none\';t.textContent=\'展开完整原文 \u25bc\';}">展开完整原文 \u25bc</button>' +
-      '</div>' +
-      '<div class="dbt-full-content" id="' + cardId + '">' +
-        renderMarkdownMinimal(clean.body) +
-      '</div>';
+      if (card.full_text) {
+        html += '<div class="dbt-card-foot">' +
+          '<button class="dbt-expand-btn" onclick="var d=document.getElementById(\'' + cardId + '\');var t=this;' +
+            'if(d.style.display===\'none\'||!d.style.display){d.style.display=\'block\';t.textContent=\'收起 \u25b2\';}' +
+            'else{d.style.display=\'none\';t.textContent=\'展开原文 \u25bc\';}">展开原文 \u25bc</button>' +
+        '</div>' +
+        '<div class="dbt-full-content" id="' + cardId + '" style="display:none">' +
+          '<p>' + escHtml(card.full_text).replace(/\n/g, '<br>') + '</p>' +
+        '</div>';
+      }
 
-      // HOST blind spots
-      if (item.agent === 'HOST' && item.blind_spots && item.blind_spots.length > 0) {
+      // Blind spots on HOST cards
+      if (card.blind_spots && card.blind_spots.length > 0) {
         html += '<div class="dbt-blind-section"><span class="dbt-blind-label">\ud83d\udd0d 盲区引导</span><ul>' +
-          item.blind_spots.map(function(q){ return '<li>' + escHtml(q) + '</li>'; }).join('') +
+          card.blind_spots.map(function(q){ return '<li>' + escHtml(q) + '</li>'; }).join('') +
         '</ul></div>';
       }
 

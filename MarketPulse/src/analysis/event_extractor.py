@@ -116,11 +116,13 @@ class EventExtractor:
                 if len(nodes) >= self.top_k:
                     break
                 sent_label = self._dominant_sentiment(info["sentiments"])
+                role = self._classify_node_role(kw, f"关键词「{kw}」关联 {info['news_refs']} 条新闻")
                 nodes.append(
                     {
                         "id": len(nodes) + 1,
                         "label": kw[:22],
-                        "type": sent_label,
+                        "type": role,
+                        "sentiment_type": sent_label,
                         "desc": f"关键词「{kw}」关联 {info['news_refs']} 条新闻",
                         "date": "",
                         "sentiment": {
@@ -131,6 +133,7 @@ class EventExtractor:
                         "strength": round(min(1.0, info["weight"]), 2),
                         "platform": "关键词提取",
                         "weight": max(1, info["news_refs"]),
+                        "sources": [],
                     }
                 )
 
@@ -142,9 +145,9 @@ class EventExtractor:
     @staticmethod
     def _assign_causal_layers(nodes: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """按权重大小和情感极端度分配因果层级。
-        第一层（根节点/起因）：weight≥8 或最高 weight 的 top 20%
-        第二层（发展节点/经过）：weight 5~7 或中间 40%
-        第三层（末端节点/影响）：weight 1~4 或最低 40%
+        level 0（根节点/起因）：weight≥8 或最高 weight 的 top 20%
+        level 1（发展节点/经过）：weight 5~7 或中间 40%
+        level 2（末端节点/影响）：weight 1~4 或最低 40%
         """
         if not nodes:
             return nodes
@@ -156,15 +159,15 @@ class EventExtractor:
 
         for i, node in enumerate(sorted_nodes):
             if i < root_cut or node.get("weight", 1) >= 8:
-                node["layer"] = 1
+                node["layer"] = 0
                 node["is_root"] = True
                 node["weight"] = max(node.get("weight", 1), 8)
             elif i < dev_cut or node.get("weight", 1) >= 5:
-                node["layer"] = 2
+                node["layer"] = 1
                 node["is_root"] = False
                 node["weight"] = max(5, min(node.get("weight", 99), 7))
             else:
-                node["layer"] = 3
+                node["layer"] = 2
                 node["is_root"] = False
                 node["weight"] = max(1, min(node.get("weight", 99), 4))
 
@@ -207,7 +210,7 @@ class EventExtractor:
 
         for i, news in enumerate(sampled[:max_news_nodes]):
             label = (news.get("sentiment_label") or "neutral").lower()
-            ntype = "pos" if label == "positive" else ("neg" if label == "negative" else "neu")
+            sentiment_type = "pos" if label == "positive" else ("neg" if label == "negative" else "neu")
 
             title = (news.get("title") or f"新闻{i+1}")[:22]
             sentiment_score = news.get("sentiment_score", 0)
@@ -216,11 +219,14 @@ class EventExtractor:
             for kw in self._match_keywords(news.get("title", ""), keyword_nodes):
                 keyword_nodes[kw]["sentiments"].append(label)
 
+            role = self._classify_node_role(title, news.get("summary") or news.get("content") or "")
+
             nodes.append(
                 {
                     "id": i + 1,
                     "label": title,
-                    "type": ntype,
+                    "type": role,
+                    "sentiment_type": sentiment_type,
                     "desc": (news.get("summary") or news.get("content") or "")[:100],
                     "date": news.get("publish_time") or news.get("date") or "",
                     "sentiment": (
@@ -229,6 +235,12 @@ class EventExtractor:
                     "strength": round(abs(sentiment_score) if abs(sentiment_score) > 0.1 else 0.5, 2),
                     "platform": (news.get("source") or news.get("platform") or "新闻媒体")[:20],
                     "weight": max(1, int(abs(sentiment_score) * 10)),
+                    "sources": [{
+                        "title": (news.get("title") or "")[:60],
+                        "platform": (news.get("source") or news.get("platform") or "未知")[:20],
+                        "time": news.get("publish_time") or news.get("date") or "",
+                        "url": news.get("url") or news.get("link") or "",
+                    }],
                 }
             )
         return nodes
@@ -287,7 +299,7 @@ class EventExtractor:
                         edges.append({
                             "from": frm, "to": to,
                             "type": rel_type, "rel": rel_type,
-                            "color": {"trigger": "#ef4444", "cause": "#f59e0b", "relate": "#6366f1", "escalate": "#dc2626"}.get(rel_type, "var(--ac)"),
+                            "color": {"trigger": "#e74c3c", "cause": "#3498db", "relate": "#95a5a6", "escalate": "#e67e22"}.get(rel_type, "#95a5a6"),
                             "label": rel_label,
                             "weight": abs(la - lb) + 1,
                         })
@@ -311,29 +323,29 @@ class EventExtractor:
         trigger_edges = sum(1 for e in edges if e["type"] in ("trigger", "cause", "escalate"))
         if total_edges > 0 and trigger_edges / total_edges < 0.4:
             # 补充跨层边
+            layer0_nodes = [n for n in nodes if n.get("layer") == 0]
             layer1_nodes = [n for n in nodes if n.get("layer") == 1]
             layer2_nodes = [n for n in nodes if n.get("layer") == 2]
-            layer3_nodes = [n for n in nodes if n.get("layer") == 3]
-            for l1 in layer1_nodes[:3]:
-                for l2 in layer2_nodes[:5]:
-                    key = (l1["id"], l2["id"])
+            for l0 in layer0_nodes[:3]:
+                for l1 in layer1_nodes[:5]:
+                    key = (l0["id"], l1["id"])
                     if key not in edge_set:
                         edge_set.add(key)
                         edges.append({
-                            "from": l1["id"], "to": l2["id"],
+                            "from": l0["id"], "to": l1["id"],
                             "type": "trigger", "rel": "trigger",
-                            "color": "#ef4444", "label": "触发",
+                            "color": "#e74c3c", "label": "触发",
                             "weight": 3,
                         })
-            for l1 in layer1_nodes[:2]:
-                for l3 in layer3_nodes[:3]:
-                    key = (l1["id"], l3["id"])
+            for l0 in layer0_nodes[:2]:
+                for l2 in layer2_nodes[:3]:
+                    key = (l0["id"], l2["id"])
                     if key not in edge_set:
                         edge_set.add(key)
                         edges.append({
-                            "from": l1["id"], "to": l3["id"],
+                            "from": l0["id"], "to": l2["id"],
                             "type": "escalate", "rel": "escalate",
-                            "color": "#dc2626", "label": "激化",
+                            "color": "#e67e22", "label": "激化",
                             "weight": 3,
                         })
 
@@ -351,6 +363,21 @@ class EventExtractor:
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+    @staticmethod
+    def _classify_node_role(label: str, desc: str = "") -> str:
+        """按语义关键词将节点归类为：政策 / 市场 / 舆情 / 外部事件"""
+        text = (label + " " + desc)
+        if any(kw in text for kw in ["政策", "法规", "政府", "部门", "监管", "关税", "制裁", "法律", "谈判",
+                                      "央行", "财政部", "商务部", "国务院", "行政", "立法"]):
+            return "政策"
+        if any(kw in text for kw in ["股市", "股价", "涨跌", "投资", "业绩", "营收", "财报", "利润",
+                                      "市值", "IPO", "上市", "基金", "板块", "期货", "汇率"]):
+            return "市场"
+        if any(kw in text for kw in ["舆论", "网友", "热议", "争议", "口碑", "投诉", "曝光", "声量",
+                                      "热搜", "刷屏", "吐槽", "维权", "抵制", "追捧"]):
+            return "舆情"
+        return "外部事件"
+
     @staticmethod
     def _dominant_sentiment(sentiments: List[str]) -> str:
         if not sentiments:

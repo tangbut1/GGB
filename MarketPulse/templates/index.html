@@ -276,6 +276,35 @@ body.global-resizing * { cursor:col-resize !important; }
 .status-pill.done .dot { background:var(--gr); }
 .status-pill.done { color:var(--gr); background:var(--gr-s); }
 
+/* API 配置提醒 Banner */
+.api-warning-banner {
+  display:flex; align-items:flex-start; gap:14px;
+  margin:0 20px 12px 20px; padding:14px 18px;
+  border-radius:var(--r2); border:1px solid rgba(217,119,6,0.25);
+  background:linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%);
+  position:relative;
+}
+[data-theme="dark"] .api-warning-banner {
+  background:linear-gradient(135deg, #2d1f0e 0%, #362613 100%);
+  border-color:rgba(245,158,66,0.25);
+}
+.api-warning-icon { font-size:22px; flex-shrink:0; margin-top:1px; }
+.api-warning-body { flex:1; min-width:0; }
+.api-warning-title { font-weight:600; font-size:13px; color:var(--or); margin-bottom:6px; }
+.api-warning-list { font-size:11px; color:var(--tx2); margin-bottom:6px; line-height:1.6; }
+.api-warning-list span { display:inline-block; margin-right:10px; white-space:nowrap; }
+.api-warning-list .agent-missing { color:var(--rd); font-weight:600; }
+.api-warning-hint { font-size:10px; color:var(--tx3); line-height:1.5; }
+.api-warning-hint code {
+  background:rgba(0,0,0,0.07); padding:1px 6px; border-radius:3px;
+  font-family:var(--mono); font-size:10px;
+}
+.api-warning-close {
+  background:none; border:none; font-size:16px; color:var(--tx3);
+  cursor:pointer; padding:0 4px; line-height:1; flex-shrink:0;
+}
+.api-warning-close:hover { color:var(--tx2); }
+
 .agent-rows { padding:12px 18px; display:flex; flex-direction:column; gap:6px; flex-shrink:0; }
 .agent-row {
   display:flex; align-items:center; gap:10px; padding:9px 12px;
@@ -515,6 +544,30 @@ body.graph-resizing * { cursor:col-resize !important; }
 .dv-statval.sc-official{color:var(--pu);}
 .dv-statsub{font-size:10px;color:var(--tx3);margin-top:2px;}
 .dv-bar{height:3px;border-radius:2px;background:var(--s3);overflow:hidden;margin-top:6px;}
+
+/* Side panel: sources list */
+.src-list { max-height:240px; overflow-y:auto; }
+.src-item { padding:8px 10px; border-bottom:1px solid var(--b); }
+.src-item:last-child { border-bottom:none; }
+.src-title { font-size:12px; font-weight:600; color:var(--tx); line-height:1.4; margin-bottom:4px; }
+.src-meta { display:flex; gap:10px; font-size:10px; color:var(--tx3); margin-bottom:4px; }
+.src-platform { background:var(--s2); padding:1px 6px; border-radius:4px; }
+.src-link { font-size:10px; color:var(--ac); text-decoration:none; font-weight:600; display:inline-block; margin-top:2px; }
+.src-link:hover { text-decoration:underline; }
+.src-link-off { color:var(--tx3); cursor:default; }
+.src-empty { padding:12px; text-align:center; color:var(--tx3); font-size:11px; }
+
+/* Side panel: causal node links */
+.dv-causal-row { margin-bottom:6px; line-height:1.8; }
+.dv-causal-label { font-size:10px; color:var(--tx3); font-weight:600; margin-right:4px; }
+.dv-causal-node { display:inline-block; font-size:11px; color:var(--ac); cursor:pointer; background:var(--ac-s); padding:1px 8px; border-radius:10px; margin:1px 3px; transition:background .15s; }
+.dv-causal-node:hover { background:var(--ac-g); }
+
+/* new filter chip colors for semantic types */
+.g-fchip.g-fc-\u653f\u7b56 .g-fdot { background:#9b59b6; }
+.g-fchip.g-fc-\u5e02\u573a .g-fdot { background:#27ae60; }
+.g-fchip.g-fc-\u8206\u60c5 .g-fdot { background:#2980b9; }
+.g-fchip.g-fc-\u5916\u90e8\u4e8b\u4ef6 .g-fdot { background:#c0392b; }
 .dv-bar-f{height:100%;border-radius:2px;width:0%;transition:width .9s var(--ease);}
 .dv-bar-f.sc-pos{background:var(--gr);} .dv-bar-f.sc-neg{background:var(--rd);}
 .dv-bar-f.sc-neu{background:var(--bl);} .dv-bar-f.sc-risk{background:var(--or);}
@@ -612,31 +665,43 @@ body.graph-resizing * { cursor:col-resize !important; }
 .ai-blind-spots-card li { font-size:12px; color:var(--tx2); line-height:1.6; margin:4px 0; }
 
 /* ── Forum Debate Timeline ── */
-.fdt-section { border:1px solid var(--b); border-radius:var(--r); overflow:hidden; }
-.fdt-header {
-  display:flex; align-items:center; gap:10px; padding:14px 18px;
-  background:var(--s2); cursor:pointer; user-select:none;
+/* Debate Timeline: round summary cards */
+.dbt-section { margin-top:14px; }
+.dbt-round-header {
+  display:flex; align-items:center; gap:10px; padding:10px 0; margin-bottom:8px;
+  border-bottom:2px solid var(--ac); font-size:14px; font-weight:700; color:var(--ac);
 }
-.fdt-header h4 { font-size:14px; font-weight:700; color:var(--tx); margin:0; }
-.fdt-round-count { font-size:11px; background:var(--ac); color:#fff; padding:2px 10px; border-radius:20px; font-weight:600; }
-.fdt-body { padding:0; }
-.fdt-item {
-  padding:14px 18px; border-bottom:1px solid var(--b);
-  transition:background .15s;
+.dbt-round-num { font-size:11px; background:var(--ac); color:#fff; padding:3px 10px; border-radius:12px; }
+.dbt-card {
+  padding:14px 16px; margin-bottom:10px; border-radius:var(--r); border:1px solid var(--b);
+  background:var(--s1); transition:box-shadow .2s; position:relative;
 }
-.fdt-item:last-child { border-bottom:none; }
-.fdt-item.fdt-challenge { background:rgba(239,68,68,0.03); }
-.fdt-item.fdt-summary { background:rgba(99,102,241,0.03); }
-.fdt-meta { display:flex; align-items:center; gap:8px; margin-bottom:6px; flex-wrap:wrap; }
-.fdt-agent { font-size:12px; font-weight:700; }
-.fdt-round { font-size:10px; background:var(--s3); color:var(--tx2); padding:2px 8px; border-radius:12px; }
-.fdt-type { font-size:10px; color:var(--tx3); }
-.fdt-key { font-size:12px; font-weight:600; color:var(--tx); margin:6px 0 4px; padding:6px 10px; background:var(--s2); border-radius:6px; }
-.fdt-content { font-size:12px; color:var(--tx2); line-height:1.6; margin:0; }
-.fdt-blind { margin-top:8px; padding:8px 12px; background:rgba(217,119,6,0.05); border-radius:6px; }
-.fdt-blind span { font-size:11px; font-weight:600; color:var(--or); }
-.fdt-blind ul { margin:4px 0 0; padding-left:16px; }
-.fdt-blind li { font-size:11px; color:var(--tx2); line-height:1.5; margin:2px 0; }
+.dbt-card:hover { box-shadow:0 1px 6px rgba(0,0,0,0.04); }
+.dbt-card-header { display:flex; align-items:center; gap:8px; margin-bottom:8px; }
+.dbt-card-icon { font-size:16px; flex-shrink:0; }
+.dbt-card-agent { font-size:13px; font-weight:700; color:var(--tx); }
+.dbt-card-round { font-size:10px; background:var(--s3); color:var(--tx2); padding:2px 8px; border-radius:12px; margin-left:auto; }
+.dbt-card-summary { font-size:12.5px; color:var(--tx); line-height:1.6; margin-bottom:8px; }
+.dbt-card-findings { margin:0; padding-left:18px; }
+.dbt-card-findings li { font-size:11px; color:var(--tx2); line-height:1.6; margin:3px 0; }
+.dbt-card-foot { margin-top:8px; padding-top:8px; border-top:1px solid var(--b); }
+.dbt-expand-btn {
+  background:none; border:none; color:var(--ac); cursor:pointer; font-size:11px;
+  font-weight:600; padding:2px 6px; border-radius:4px; transition:background .15s;
+}
+.dbt-expand-btn:hover { background:var(--ac-s); }
+.dbt-full-content {
+  margin-top:8px; padding:10px 12px; background:var(--s2); border-radius:6px;
+  font-size:12px; color:var(--tx2); line-height:1.7; max-height:300px; overflow-y:auto;
+  display:none;
+}
+.dbt-full-content p { margin:6px 0; }
+.dbt-full-content strong { color:var(--tx); }
+.dbt-full-content ul, .dbt-full-content ol { padding-left:18px; margin:4px 0; }
+.dbt-full-content li { margin:2px 0; }
+.dbt-blind-section { margin-top:8px; padding:8px 10px; background:rgba(217,119,6,0.05); border-radius:6px; }
+.dbt-blind-section .dbt-blind-label { font-size:11px; font-weight:600; color:var(--or); margin-bottom:4px; display:block; }
+.dbt-blind-section li { font-size:11px; color:var(--tx2); margin:2px 0; }
 
 /* ── Follow-up Modal ── */
 .fu-modal-overlay {
@@ -739,6 +804,16 @@ body.graph-resizing * { cursor:col-resize !important; }
 </header>
 
 <main>
+<!-- ⚠️ API 配置提醒 -->
+<div class="api-warning-banner" id="apiWarningBanner" style="display:none">
+  <div class="api-warning-icon">⚠️</div>
+  <div class="api-warning-body">
+    <div class="api-warning-title">部分 Agent API Key 未配置</div>
+    <div class="api-warning-list" id="apiWarningList"></div>
+    <div class="api-warning-hint">LLM 调用将使用模拟数据返回占位结果。请编辑 <code>MarketPulse/.env</code> 填入真实 API Key 后重启服务。</div>
+  </div>
+  <button class="api-warning-close" onclick="document.getElementById('apiWarningBanner').style.display='none'">✕</button>
+</div>
 <!-- LEFT PANEL -->
 <div class="left-panel">
   <div class="panel-header">
@@ -840,15 +915,15 @@ body.graph-resizing * { cursor:col-resize !important; }
               <div class="g-hd-l"><span class="g-hd-dot"></span><span>事件关系图谱</span></div>
               <div class="g-hd-r">
                 <div class="g-filters" id="gFilters">
-                  <span class="g-fchip g-fc-pos active" data-type="pos" onclick="graphToggleFilter(this)"><span class="g-fdot g-fd-pos"></span>正面</span>
-                  <span class="g-fchip g-fc-neg active" data-type="neg" onclick="graphToggleFilter(this)"><span class="g-fdot g-fd-neg"></span>负面</span>
-                  <span class="g-fchip g-fc-neu active" data-type="neu" onclick="graphToggleFilter(this)"><span class="g-fdot g-fd-neu"></span>中性</span>
-                  <span class="g-fchip g-fc-risk active" data-type="risk" onclick="graphToggleFilter(this)"><span class="g-fdot g-fd-risk"></span>风险</span>
+                  <span class="g-fchip g-fc-政策 active" data-type="政策" onclick="graphToggleFilter(this)"><span class="g-fdot g-fd-政策"></span>政策</span>
+                  <span class="g-fchip g-fc-市场 active" data-type="市场" onclick="graphToggleFilter(this)"><span class="g-fdot g-fd-市场"></span>市场</span>
+                  <span class="g-fchip g-fc-舆情 active" data-type="舆情" onclick="graphToggleFilter(this)"><span class="g-fdot g-fd-舆情"></span>舆情</span>
+                  <span class="g-fchip g-fc-外部事件 active" data-type="外部事件" onclick="graphToggleFilter(this)"><span class="g-fdot g-fd-外部事件"></span>外部事件</span>
                 </div>
-                <span class="g-leg"><span class="g-ll g-lg"></span>促进</span>
-                <span class="g-leg"><span class="g-ll g-lr"></span>触发</span>
-                <span class="g-leg"><span class="g-ll g-lb"></span>关联</span>
-                <span class="g-leg"><span class="g-ll g-ly"></span>弱关联</span>
+                <span class="g-leg"><span class="g-ll" style="background:#e74c3c"></span>触发</span>
+                <span class="g-leg"><span class="g-ll" style="background:#e67e22"></span>激化</span>
+                <span class="g-leg"><span class="g-ll" style="background:#3498db"></span>引发</span>
+                <span class="g-leg"><span class="g-ll" style="background:#95a5a6"></span>关联</span>
                 <div class="g-mode-tabs" id="gModeTabs">
                   <button class="g-mode-btn active" data-mode="main" onclick="graphSetMode('main')">主线</button>
                   <button class="g-mode-btn" data-mode="timeline" onclick="graphSetMode('timeline')">时间</button>
@@ -951,7 +1026,7 @@ var eventNodesData = null;
 var visNetwork = null;
 var graphNodesDS = null;
 var graphEdgesDS = null;
-var activeFilters = {pos:true, neg:true, neu:true, risk:true, official:true};
+var activeFilters = {'政策':true, '市场':true, '舆情':true, '外部事件':true};
 var physicsEnabled = true;
 var localFilesData = [];  // 本地上传文件列表，每项 {name, type, data}，data 为解析后的数组或 {_raw, _filename, _type}
 var currentSrcMode = null; // 'social' | 'news' — 数据来源模式
@@ -2054,6 +2129,10 @@ function renderCharts() {
 
 // ═══════════════ EVENT GRAPH (Refactored) ═══════════════
 var GRAPH_TYPE_COLOR = {
+  '政策':     {border:'#9b59b6', bg_l:'#f5f0fa', bg_d:'rgba(155,89,182,0.10)', font_l:'#7d3c98', font_d:'#c39bd3', hi:'#af7ac5'},
+  '市场':     {border:'#27ae60', bg_l:'#eafaf1', bg_d:'rgba(39,174,96,0.10)', font_l:'#1e8449', font_d:'#58d68d', hi:'#2ecc71'},
+  '舆情':     {border:'#2980b9', bg_l:'#eaf2f8', bg_d:'rgba(41,128,185,0.10)', font_l:'#1a5276', font_d:'#5dade2', hi:'#3498db'},
+  '外部事件': {border:'#c0392b', bg_l:'#fdedec', bg_d:'rgba(192,57,43,0.10)', font_l:'#922b21', font_d:'#ec7063', hi:'#e74c3c'},
   pos:      {border:'#22c55e', bg_l:'#f0fdf4', bg_d:'rgba(63,214,138,0.08)',  font_l:'#15803d', font_d:'#3fd68a', hi:'#16a34a'},
   neg:      {border:'#ef4444', bg_l:'#fef2f2', bg_d:'rgba(240,106,106,0.08)', font_l:'#b91c1c', font_d:'#f06a6a', hi:'#dc2626'},
   neu:      {border:'#3b82f6', bg_l:'#eff6ff', bg_d:'rgba(79,156,249,0.08)',  font_l:'#1d4ed8', font_d:'#4f9cf9', hi:'#2563eb'},
@@ -2061,6 +2140,11 @@ var GRAPH_TYPE_COLOR = {
   official: {border:'#8b5cf6', bg_l:'#f5f3ff', bg_d:'rgba(167,139,250,0.08)',font_l:'#6d28d9', font_d:'#a78bfa', hi:'#7c3aed'},
 };
 var GRAPH_EDGE_COLOR = {
+  trigger:  {color:'#e74c3c',highlight:'#c0392b',hover:'#c0392b',width:3,dashes:false},
+  escalate: {color:'#e67e22',highlight:'#d35400',hover:'#d35400',width:2,dashes:false},
+  cause:    {color:'#3498db',highlight:'#2980b9',hover:'#2980b9',width:2,dashes:false},
+  relate:   {color:'#95a5a6',highlight:'#7f8c8d',hover:'#7f8c8d',width:1,dashes:true},
+  weak:     {color:'#95a5a6',highlight:'#7f8c8d',hover:'#7f8c8d',width:1,dashes:true},
   pos:{color:'#22c55e',highlight:'#16a34a',hover:'#16a34a'},
   neg:{color:'#ef4444',highlight:'#dc2626',hover:'#dc2626'},
   tl: {color:'#3b82f6',highlight:'#2563eb',hover:'#2563eb'},
@@ -2089,25 +2173,28 @@ function graphBuildNetwork() {
 
   // build vis dataset
   var nodesData = filteredNodes.map(function(n){
-    var tc = GRAPH_TYPE_COLOR[n.type]||GRAPH_TYPE_COLOR['neu'];
+    var tc = GRAPH_TYPE_COLOR[n.type]||GRAPH_TYPE_COLOR['外部事件'];
     var w = n.weight || 1;
-    var layer = n.layer || 2;
-    var nodeSize = layer===1 ? 16 : layer===2 ? 13 : 10; // 根节点更大
+    var layer = n.layer != null ? n.layer : 1;
+    var nodeSize = layer===0 ? 16 : layer===1 ? 13 : 10; // level 0 根节点更大
+    var isMainline = mode==='main' || (graphMainlineNodeIds && graphMainlineNodeIds[n.id]);
     return {
       id:n.id, label:n.label, type:n.type, platform:n.platform||'', date:n.date,
       level: layer,  // hierarchical 按此字段分层
       color:{background:isDark?tc.bg_d:tc.bg_l, border:tc.border, highlight:{border:tc.hi,background:isDark?tc.bg_d:tc.bg_l}},
-      font:{color:isDark?tc.font_d:tc.font_l, size:nodeSize, face:'Inter'}, shape:'box',
-      borderWidth: n.is_root ? 3 : 2,
+      font:{color:isDark?tc.font_d:tc.font_l, size:nodeSize, face:'Inter', bold: isMainline ? {mod:'bold'} : undefined}, shape:'box',
+      borderWidth: isMainline ? Math.max(3, (n.is_root?3:2)) : (n.is_root ? 3 : 2),
       widthConstraint:{minimum:70, maximum:155},
       margin:{top:5+w,bottom:5+w,left:10+w*2,right:10+w*2},
       title: n.desc || n.label  // hover tooltip 显示完整描述
     };
   });
   var edgesData = filteredEdges.map(function(e){
-    var ec = GRAPH_EDGE_COLOR[e.rel||e.type]||GRAPH_EDGE_COLOR['neu'];
+    var ec = GRAPH_EDGE_COLOR[e.rel||e.type]||GRAPH_EDGE_COLOR['relate'];
     var w = e.weight||1;
-    return {from:e.from, to:e.to, type:e.rel||e.type, color:ec, width:w>=2?2.5:1, dashes:w<2, arrows:{to:{enabled:true,scaleFactor:.6}}, smooth:{type:'curvedCW',roundness:.15}};
+    var dashes = ec.dashes != null ? ec.dashes : (w < 2);
+    var edgeWidth = Math.max(1, ec.width || (w >= 2 ? 2.5 : 1));
+    return {from:e.from, to:e.to, type:e.rel||e.type, color:ec, width:edgeWidth, dashes:dashes, arrows:{to:{enabled:true,scaleFactor:.6}}, smooth:{type:'curvedCW',roundness:.15}};
   });
 
   if (visNetwork){visNetwork.destroy();visNetwork=null;}
@@ -2145,7 +2232,7 @@ function graphBuildNetwork() {
 function graphGetLayout(mode) {
   if (mode === 'main') {
     return {
-      layout:{hierarchical:{enabled:true, direction:'UD', sortMethod:'directed', levelSeparation:200, nodeSpacing:120, treeSpacing:150, blockShifting:true, edgeMinimization:true, parentCentralization:true}},
+      layout:{hierarchical:{enabled:true, direction:'UD', sortMethod:'directed', levelSeparation:120, nodeSpacing:180, treeSpacing:150, blockShifting:true, edgeMinimization:true, parentCentralization:true}},
       physics:{enabled:false},
       interaction:{hover:true, tooltipDelay:200, navigationButtons:false},
     };
@@ -2167,16 +2254,59 @@ function graphGetLayout(mode) {
 function graphGetVisibleEdges(mode) {
   var d = currentData; if (!d||!d.edges) return [];
   if (mode === 'main') {
-    return d.edges.map(function(e){
+    // 主线模式：计算最长因果路径，最多 8 个节点
+    var pathNodeIds = graphComputeMainlinePath(d.nodes, d.edges);
+    var mainlineSet = {};
+    pathNodeIds.forEach(function(id){ mainlineSet[id] = true; });
+    // 存储供 graphBuildNetwork 使用
+    graphMainlineNodeIds = mainlineSet;
+    return d.edges.filter(function(e){
+      return mainlineSet[e.from] && mainlineSet[e.to];
+    }).map(function(e){
       var w = e.weight || 1;
+      var ec = GRAPH_EDGE_COLOR[e.type||e.rel]||GRAPH_EDGE_COLOR['relate'];
       return {
         from:e.from, to:e.to, rel:e.type||e.rel, weight:w,
-        color:Object.assign({}, GRAPH_EDGE_COLOR[e.type||e.rel]||GRAPH_EDGE_COLOR['neu'], {opacity:w>=2?1:0.15}),
-        width:w>=2?2.5:1, dashes:w<2
+        color:Object.assign({}, ec),
+        width:Math.max(1, ec.width||2), dashes:ec.dashes||false
       };
     });
   }
   return d.edges;
+}
+
+// DFS 找最长因果路径（从 root 节点出发）
+var graphMainlineNodeIds = {};
+function graphComputeMainlinePath(nodes, edges) {
+  if (!nodes||!nodes.length) return [];
+  var roots = nodes.filter(function(n){ return n.is_root || n.layer===0; });
+  if (!roots.length) roots = nodes.slice(0,1);
+  var adj = {};
+  edges.forEach(function(e){
+    if (!adj[e.from]) adj[e.from] = [];
+    adj[e.from].push(e.to);
+  });
+  var bestPath = [];
+  function dfs(current, path, visited) {
+    if (path.length > bestPath.length) bestPath = path.slice();
+    if (bestPath.length >= 8) return; // 最多 8 个节点
+    var nexts = adj[current] || [];
+    for (var i=0; i<nexts.length; i++) {
+      var nxt = nexts[i];
+      if (!visited[nxt] && path.length < 8) {
+        visited[nxt] = true;
+        path.push(nxt);
+        dfs(nxt, path, visited);
+        path.pop();
+        visited[nxt] = false;
+      }
+    }
+  }
+  roots.forEach(function(r){
+    var visited = {}; visited[r.id] = true;
+    dfs(r.id, [r.id], visited);
+  });
+  return bestPath;
 }
 
 function graphApplyTimelineLayout(nodes) {
@@ -2248,7 +2378,7 @@ function graphRenderTimeline(nodes) {
 
   container.innerHTML = items.map(function(item){
     var n = item.n;
-    var tc = GRAPH_TYPE_COLOR[n.type]||GRAPH_TYPE_COLOR['neu'];
+    var tc = GRAPH_TYPE_COLOR[n.type]||GRAPH_TYPE_COLOR['外部事件'];
     var posClass = item.isAbove ? 'above' : 'below';
     return '<div class="g-tl-node '+posClass+'" style="left:'+item.x+'px; --y-offset:'+item.yOffset+'px" onclick="graphSelectNode('+n.id+')" data-id="'+n.id+'">'
       +'<div class="g-tl-dot" style="background:'+tc.border+';border-color:'+tc.border+'"></div>'
@@ -2285,10 +2415,9 @@ function graphRenderDetail(n) {
   var panel = document.getElementById('detailFilled');
   panel.style.display = 'block';
 
-  var tc = GRAPH_TYPE_COLOR[n.type]||GRAPH_TYPE_COLOR['neu'];
+  var tc = GRAPH_TYPE_COLOR[n.type]||GRAPH_TYPE_COLOR['外部事件'];
   var relEdges = d.edges.filter(function(e){return e.from===n.id||e.to===n.id;});
   var relCount = relEdges.length;
-  var strength = Math.min(96, 28+relCount*14);
   var linkedNodes = [];
   relEdges.forEach(function(e){
     var oid = e.from===n.id?e.to:e.from;
@@ -2296,33 +2425,64 @@ function graphRenderDetail(n) {
     if (on&&linkedNodes.filter(function(x){return x.id===oid;}).length===0) linkedNodes.push({node:on, rel:e.type||e.rel, dir:e.from===n.id?'\u2192':'\u2190'});
   });
 
-  var impactText = strength>70?'此事件是核心节点，对整体舆情走势影响显著。':strength>40?'此事件与其他节点存在重要关联，对舆情有中等影响。':'此事件相对独立，对整体舆情的影响较弱。';
-  var badgeCls = n.type==='pos'?'pos':n.type==='neg'?'neg':n.type==='risk'?'risk':n.type==='official'?'official':'neu';
+  var levelLabels = {0:'起因', 1:'发展', 2:'影响'};
+  var levelLabel = levelLabels[n.layer]||'发展';
+  var levelColors = {0:'#e74c3c', 1:'#e67e22', 2:'#3498db'};
+  var sentCls = (n.sentiment_type||'neu')==='pos'?'pos':(n.sentiment_type||'neu')==='neg'?'neg':'neu';
+
+  // 来源列表 HTML
+  var sourcesHtml = '';
+  if (n.sources && n.sources.length > 0) {
+    sourcesHtml = n.sources.map(function(src){
+      var title = (src.title||'').substring(0,40);
+      var hasUrl = src.url && src.url.length > 5;
+      return '<div class="src-item">'+
+        '<div class="src-title">'+escHtml(title)+(title.length>=40?'...':'')+'</div>'+
+        '<div class="src-meta"><span class="src-platform">'+(src.platform||'未知')+'</span>'+
+        '<span class="src-time">'+(src.time||'')+'</span></div>'+
+        (hasUrl ? '<a class="src-link" href="'+escHtml(src.url)+'" target="_blank" rel="noopener">\u2197 查看原文</a>' : '<span class="src-link src-link-off">无链接</span>')+
+      '</div>';
+    }).join('');
+  } else {
+    sourcesHtml = '<div class="src-empty">暂无原始数据来源</div>';
+  }
+
+  // 因果关联节点
+  var causalHtml = '';
+  var upstream = linkedNodes.filter(function(x){return x.dir==='\u2190';});
+  var downstream = linkedNodes.filter(function(x){return x.dir==='\u2192';});
+  if (upstream.length > 0) {
+    causalHtml += '<div class="dv-causal-row"><span class="dv-causal-label">\u2191 来自：</span>'+
+      upstream.map(function(ln){
+        return '<span class="dv-causal-node" onclick="graphSelectNode('+ln.node.id+')">'+ln.node.label+'</span>';
+      }).join('')+'</div>';
+  }
+  if (downstream.length > 0) {
+    causalHtml += '<div class="dv-causal-row"><span class="dv-causal-label">\u2193 指向：</span>'+
+      downstream.map(function(ln){
+        return '<span class="dv-causal-node" onclick="graphSelectNode('+ln.node.id+')">'+ln.node.label+'</span>';
+      }).join('')+'</div>';
+  }
 
   panel.innerHTML =
-    '<div class="dv-banner b-'+n.type+'">'+
-      '<div class="dv-banner-top"><div class="dv-title">'+n.label+'</div><span class="dv-badge '+badgeCls+'">'+n.sentiment+'</span></div>'+
+    '<div class="dv-banner" style="border-left:4px solid '+tc.border+'">'+
+      '<div class="dv-banner-top"><div class="dv-title">'+escHtml(n.label)+'</div>'+
+        '<div style="display:flex;gap:6px;flex-shrink:0;">'+
+          '<span class="dv-badge '+sentCls+'">'+n.sentiment+'</span>'+
+          '<span class="dv-badge" style="background:'+levelColors[n.layer||1]+'20;color:'+levelColors[n.layer||1]+';border:1px solid '+levelColors[n.layer||1]+'40">'+levelLabel+'</span>'+
+        '</div>'+
+      '</div>'+
       '<div class="dv-meta"><span>'+n.date+'</span><span class="dv-meta-sep">\u00b7</span><span>平台: '+(n.platform||'未知')+'</span><span class="dv-meta-sep">\u00b7</span><span>权重: '+(n.weight||1)+'</span></div>'+
     '</div>'+
-    '<div class="dv-infoblock">'+
-      '<div class="dv-inforow"><span class="dv-key">日期</span><span class="dv-val">'+n.date+'</span></div>'+
-      '<div class="dv-inforow"><span class="dv-key">情感倾向</span><span class="dv-badge '+badgeCls+'" style="display:inline-block;">'+n.sentiment+'</span></div>'+
-      '<div class="dv-inforow"><span class="dv-key">平台</span><span class="dv-val">'+(n.platform||'未知')+'</span></div>'+
+    '<div class="dv-sec"><div class="dv-sec-hd">事件描述</div><div class="dv-desc">'+escHtml(n.desc||'')+'</div></div>'+
+    '<div class="dv-sec"><div class="dv-sec-hd">\ud83d\udcc4 原始数据来源 ('+(n.sources?n.sources.length:0)+' 条)</div>'+
+      '<div class="src-list">'+sourcesHtml+'</div>'+
     '</div>'+
-    '<div class="dv-sec"><div class="dv-sec-hd">事件描述</div><div class="dv-desc">'+n.desc+'</div></div>'+
+    (causalHtml ? '<div class="dv-sec"><div class="dv-sec-hd">\ud83d\udd17 因果关联节点</div>'+causalHtml+'</div>' : '')+
     '<div class="dv-statgrid">'+
-      '<div class="dv-statcard sc-'+badgeCls+'"><div class="dv-statval sc-'+badgeCls+'">'+relCount+'</div><div class="dv-statsub">个事件关联</div><div class="dv-bar"><div class="dv-bar-f sc-'+badgeCls+'" id="dvBarRel" style="width:0%"></div></div></div>'+
-      '<div class="dv-statcard sc-'+badgeCls+'"><div class="dv-statval sc-'+badgeCls+'">'+strength+'%</div><div class="dv-statsub">关联强度</div><div class="dv-bar"><div class="dv-bar-f sc-'+badgeCls+'" id="dvBarStr" style="width:0%"></div></div></div>'+
-    '</div>'+
-    '<div class="dv-sec"><div class="dv-sec-hd">关联事件</div>'+
-      (linkedNodes.length>0?linkedNodes.map(function(ln){var lt=GRAPH_TYPE_COLOR[ln.node.type]||GRAPH_TYPE_COLOR['neu']; return '<div class="dv-link-item" onclick="graphSelectNode('+ln.node.id+')"><span class="dv-link-dot ld-'+ln.node.type+'"></span><span class="dv-link-name">'+ln.node.label+'</span><span class="dv-link-rel">'+ln.rel+'</span><span class="dv-link-arrow">'+ln.dir+'</span></div>';}).join(''):'<p style="font-size:11px;color:var(--tx3);">无关联事件</p>')+
-    '</div>'+
-    '<div class="dv-impact"><div class="dv-sec-hd">影响说明</div><p>'+impactText+'</p></div>';
-
-  setTimeout(function(){
-    var bRel=document.getElementById('dvBarRel'); if(bRel)bRel.style.width=Math.min(100,relCount*16)+'%';
-    var bStr=document.getElementById('dvBarStr'); if(bStr)bStr.style.width=strength+'%';
-  },60);
+      '<div class="dv-statcard sc-'+sentCls+'"><div class="dv-statval sc-'+sentCls+'">'+relCount+'</div><div class="dv-statsub">个事件关联</div></div>'+
+      '<div class="dv-statcard sc-'+sentCls+'"><div class="dv-statval sc-'+sentCls+'">'+(Math.min(96, 28+relCount*14))+'%</div><div class="dv-statsub">关联强度</div></div>'+
+    '</div>';
 }
 
 function graphClearDetail() {
@@ -2633,57 +2793,169 @@ function renderAIInsightsCard(ai, kw) {
   if (fuEl) fuEl.style.display = 'block';
 }
 
-function renderForumDebateTimeline(debate) {
-  var AGENT_CFG = {
-    HOST:           { color: '#6366f1', icon: '🧑‍⚖️', label: '论坛主持人' },
-    CollectAgent:   { color: '#10b981', icon: '📡', label: '采集Agent' },
-    SentimentAgent: { color: '#f59e0b', icon: '💬', label: '情感Agent' },
-    TrendAgent:     { color: '#3b82f6', icon: '📈', label: '趋势Agent' },
-    ReportAgent:    { color: '#8b5cf6', icon: '📋', label: '报告Agent' }
-  };
-  var TYPE_LABEL = {
-    summary:   '综合总结',
-    insight:   '关键发现',
-    challenge: '质疑反驳',
-    action:    '行动建议'
-  };
+// ═══════════════ DEBATE TEXT CLEANING ═══════════════
+function cleanAgentSummary(text) {
+  if (!text) return {summary:'', body:''};
+  var t = text.replace(/\\n/g, '\n').replace(/\\t/g, ' ');
 
-  var maxRound = Math.max.apply(null, debate.map(function(d){return d.round;}));
+  // Step 2: strip markdown heading symbols
+  t = t.replace(/^#{1,6}\s+/gm, '');
+  // Step 3: strip table separator rows
+  t = t.replace(/^\|[\-|:\s]+\|$/gm, '');
+  // Step 4: strip bold/italic markers
+  t = t.replace(/\*{1,3}(.*?)\*{1,3}/g, '$1');
+  // Step 5: collapse multiple blank lines
+  t = t.replace(/\n{3,}/g, '\n\n');
 
-  var html = '<div class="fdt-section">' +
-    '<div class="fdt-header" onclick="var s=document.getElementById(\'fdtBody\');var b=this.querySelector(\'.fdt-toggle\');if(s.style.display===\'none\'){s.style.display=\'block\';b.textContent=\'收起 ↑\';}else{s.style.display=\'none\';b.textContent=\'展开全程 ↓\';}">' +
-      '<h4>🗣️ 多智能体论坛辩论过程</h4>' +
-      '<span class="fdt-round-count">' + maxRound + ' 轮迭代</span>' +
-      '<span class="fdt-toggle" style="cursor:pointer;color:var(--ac);font-size:12px;margin-left:auto;">展开全程 ↓</span>' +
-    '</div>' +
-    '<div class="fdt-body" id="fdtBody" style="display:none;">';
+  var body = t.trim();
 
-  debate.forEach(function(item) {
-    var cfg = AGENT_CFG[item.agent] || AGENT_CFG['HOST'];
-    var typeClass = item.type === 'challenge' ? 'fdt-challenge' : item.type === 'summary' ? 'fdt-summary' : '';
-    html += '<div class="fdt-item ' + typeClass + '" style="border-left:3px solid ' + cfg.color + '">' +
-      '<div class="fdt-meta">' +
-        '<span class="fdt-agent" style="color:' + cfg.color + '">' + cfg.icon + ' ' + cfg.label + '</span>' +
-        '<span class="fdt-round">Round ' + item.round + '</span>' +
-        '<span class="fdt-type">' + (TYPE_LABEL[item.type] || '发言') + '</span>' +
-      '</div>';
-    if (item.key_point) {
-      html += '<p class="fdt-key">💡 ' + escHtml(item.key_point) + '</p>';
-    }
-    html += '<p class="fdt-content">' + escHtml(item.content) + '</p>';
-    if (item.blind_spots && item.blind_spots.length > 0) {
-      html += '<div class="fdt-blind"><span>🔍 盲区引导：</span><ul>' +
-        item.blind_spots.map(function(q){ return '<li>' + escHtml(q) + '</li>'; }).join('') +
-      '</ul></div>';
-    }
-    html += '</div>';
-  });
-
-  html += '</div></div>';
-  return html;
+  // Step 6: extract first complete sentence as summary
+  var summary = '';
+  var m = body.match(/^[^。！？.!?]*[。！？.!?]/);
+  if (m) {
+    summary = m[0].trim();
+  } else if (body.length > 0) {
+    // Step 7: truncate to 80 chars at punctuation boundary
+    summary = body.substring(0, 80);
+    var lastPunc = Math.max(summary.lastIndexOf('\u3002'), summary.lastIndexOf('\uff01'),
+      summary.lastIndexOf('\uff1f'), summary.lastIndexOf('.'), summary.lastIndexOf('!'), summary.lastIndexOf('?'));
+    if (lastPunc > 30) summary = summary.substring(0, lastPunc + 1);
+  }
+  return {summary: summary, body: body};
 }
 
-function handleFollowUp(idx, question) {
+function extractKeyFindings(text) {
+  if (!text) return [];
+  // Split by newlines, bullet markers, or numbered items
+  var lines = text.split(/\n+/).filter(function(l){
+    l = l.trim();
+    return l.length > 10 && !/^(综合|总体|整体|根据|基于|据此|综上)/.test(l);
+  });
+  // Take first 3 meaningful lines
+  return lines.slice(0, 3).map(function(l){
+    // Strip leading bullet/number markers
+    l = l.replace(/^[\-\*\d+\.\s]+/, '').trim();
+    return l.substring(0, 80);
+  });
+}
+
+function renderMarkdownMinimal(text) {
+  if (!text) return '';
+  var html = escHtml(text);
+  // Convert **text** to <strong>
+  html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  // Convert paragraphs (double newline)
+  var paras = html.split(/\n\n+/);
+  return paras.map(function(p){
+    p = p.trim();
+    if (!p) return '';
+    // Convert - item at line start to <li>
+    if (/^[-\*]\s/.test(p)) {
+      var items = p.split(/\n/).filter(function(l){ return l.trim(); });
+      return '<ul>' + items.map(function(li){
+        return '<li>' + li.replace(/^[-\*]\s/, '') + '</li>';
+      }).join('') + '</ul>';
+    }
+    return '<p>' + p.replace(/\n/g, '<br>') + '</p>';
+  }).join('');
+}
+
+function renderForumDebateTimeline(debate) {
+  if (!debate || !debate.length) return '';
+
+  var AGENT_CFG = {
+    HOST:           { color: '#6366f1', icon: '\ud83e\uddd1\u200d\u2696\ufe0f', label: '论坛主持人' },
+    CollectAgent:   { color: '#10b981', icon: '\ud83d\udce1', label: '采集Agent' },
+    SentimentAgent: { color: '#f59e0b', icon: '\ud83d\udcac', label: '情感Agent' },
+    TrendAgent:     { color: '#3b82f6', icon: '\ud83d\udcc8', label: '趋势Agent' },
+    ReportAgent:    { color: '#8b5cf6', icon: '\ud83d\udcc4', label: '报告Agent' }
+  };
+
+  // Host dedup: group by round, keep only LAST Host per round
+  var roundHosts = {};
+  debate.forEach(function(item, i) {
+    if (item.agent === 'HOST') {
+      var r = item.round || 1;
+      if (!roundHosts[r] || i > roundHosts[r].idx) roundHosts[r] = {idx: i, item: item};
+    }
+  });
+
+  // Filter: remove earlier HOST entries
+  var deduped = debate.filter(function(item, i) {
+    if (item.agent === 'HOST') {
+      var r = item.round || 1;
+      return roundHosts[r] && roundHosts[r].idx === i;
+    }
+    return true;
+  });
+
+  // Group by round
+  var rounds = {};
+  deduped.forEach(function(item) {
+    var r = item.round || 1;
+    if (!rounds[r]) rounds[r] = [];
+    rounds[r].push(item);
+  });
+
+  var roundOrder = Object.keys(rounds).sort();
+  var html = '<div class="dbt-section">';
+
+  roundOrder.forEach(function(r) {
+    html += '<div class="dbt-round-header"><span class="dbt-round-num">Round ' + r + '</span> ' +
+      (r == 1 ? '采集 \u2192 情感 \u2192 趋势 \u2192 Host总结' : '深化分析 \u2192 Host综合研判') +
+    '</div>';
+
+    var items = rounds[r];
+    // Sort by agent order
+    var agentOrder = {CollectAgent:0, SentimentAgent:1, TrendAgent:2, ReportAgent:3, HOST:4};
+    items.sort(function(a,b){ return (agentOrder[a.agent]||9) - (agentOrder[b.agent]||9); });
+
+    items.forEach(function(item) {
+      var cfg = AGENT_CFG[item.agent] || AGENT_CFG['HOST'];
+      var clean = cleanAgentSummary(item.content || '');
+      var summary = clean.summary;
+      var findings = extractKeyFindings(clean.body);
+      var cardId = 'dbtCard' + r + '_' + item.agent;
+
+      html += '<div class="dbt-card" style="border-left:3px solid ' + cfg.color + '">' +
+        '<div class="dbt-card-header">' +
+          '<span class="dbt-card-icon">' + cfg.icon + '</span>' +
+          '<span class="dbt-card-agent" style="color:' + cfg.color + '">' + cfg.label + '</span>' +
+          (r == 2 && item.agent !== 'HOST' ? '<span style="font-size:10px;color:var(--tx3);margin-left:4px;">(深化)</span>' : '') +
+          '<span class="dbt-card-round">Round ' + r + '</span>' +
+        '</div>' +
+        '<div class="dbt-card-summary">' + escHtml(summary) + '</div>';
+
+      if (findings.length > 0) {
+        html += '<ul class="dbt-card-findings">' +
+          findings.map(function(f){ return '<li>' + escHtml(f) + '</li>'; }).join('') +
+        '</ul>';
+      }
+
+      // Full content (expandable)
+      html += '<div class="dbt-card-foot">' +
+        '<button class="dbt-expand-btn" onclick="var d=document.getElementById(\'' + cardId + '\');var t=this;' +
+          'if(d.style.display===\'none\'||!d.style.display){d.style.display=\'block\';t.textContent=\'收起 \u25b2\';}' +
+          'else{d.style.display=\'none\';t.textContent=\'展开完整原文 \u25bc\';}">展开完整原文 \u25bc</button>' +
+      '</div>' +
+      '<div class="dbt-full-content" id="' + cardId + '">' +
+        renderMarkdownMinimal(clean.body) +
+      '</div>';
+
+      // HOST blind spots
+      if (item.agent === 'HOST' && item.blind_spots && item.blind_spots.length > 0) {
+        html += '<div class="dbt-blind-section"><span class="dbt-blind-label">\ud83d\udd0d 盲区引导</span><ul>' +
+          item.blind_spots.map(function(q){ return '<li>' + escHtml(q) + '</li>'; }).join('') +
+        '</ul></div>';
+      }
+
+      html += '</div>';
+    });
+  });
+
+  html += '</div>';
+  return html;
+}function handleFollowUp(idx, question) {
   var ai = currentData && currentData.ai_insights;
   if (!ai || !ai.insights || !ai.insights[idx]) return;
   var insight = ai.insights[idx];
@@ -2752,6 +3024,26 @@ document.getElementById('keyword').addEventListener('keydown', function(e){if(e.
 
 // Init global resizer
 initGlobalResizer();
+
+// ═══════════════ API 配置状态检查 ═══════════════
+(function checkApiStatus() {
+  fetch('/status').then(function(r){ return r.json(); }).then(function(s) {
+    if (s.all_configured) return;
+    var agents = s.agents || {};
+    var missing = [];
+    var labelMap = {
+      collect_agent: 'CollectAgent', sentiment_agent: 'SentimentAgent',
+      trend_agent: 'TrendAgent', report_agent: 'ReportAgent', forum_host: 'Forum Host'
+    };
+    for (var k in agents) {
+      if (!agents[k].configured) missing.push(labelMap[k] || k);
+    }
+    if (missing.length === 0) return;
+    var listEl = document.getElementById('apiWarningList');
+    listEl.innerHTML = '未配置：' + missing.map(function(n){ return '<span class="agent-missing">'+escHtml(n)+'</span>'; }).join('');
+    document.getElementById('apiWarningBanner').style.display = 'flex';
+  }).catch(function(){});
+})();
 </script>
 
 <!-- Custom Platform Dialog -->

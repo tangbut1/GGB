@@ -41,7 +41,8 @@ class ForumMonitor:
             
             # 触发条件：消息大于阈值，或者消息>0且距离上一次有一段时间
             if agent_msg_count >= self.trigger_threshold or (agent_msg_count > 0 and time_since_last_msg > 10):
-                self._trigger_host(lines)
+                # 子线程异步调用，避免 HTTP 请求阻塞 Monitor 主循环导致日志推送卡顿
+                threading.Thread(target=self._trigger_host, args=(list(lines),), daemon=True).start()
                 agent_msg_count = 0
                 
             time.sleep(1)

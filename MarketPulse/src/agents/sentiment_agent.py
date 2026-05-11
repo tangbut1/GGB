@@ -151,6 +151,8 @@ class SentimentAgent(BaseAgent):
         total = len(analyzed_news)
         target_neg = corrected.get("negative_count", 0)
         target_pos = corrected.get("positive_count", 0)
+        # 防止 neg + pos > total 导致同一条新闻同时被标为负和正
+        target_neg = min(target_neg, total - target_pos)
 
         # 按 SnowNLP 分数排序，最低分的标记为负面
         sorted_news = sorted(analyzed_news, key=lambda n: n.get("sentiment_score", 0))
@@ -164,7 +166,3 @@ class SentimentAgent(BaseAgent):
             else:
                 news["sentiment_label"] = "neutral"
 
-if __name__ == "__main__":
-    import streamlit as st
-    st.title("SentimentAgent 独立测试")
-    st.write("请集成到应用中测试。")

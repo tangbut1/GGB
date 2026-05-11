@@ -127,6 +127,17 @@ class ReportAgent(BaseAgent):
                         p = p.strip()
                         if len(p) > 3 and p not in blind_spots:
                             blind_spots.append(p)
+                # 兜底：LLM 未按格式输出时，提取含疑问/风险/不足的句子作为盲区
+                if not blind_spots:
+                    concern_kw = ["不足", "风险", "注意", "遗漏", "忽视", "缺失", "待验证", "不确定", "未知"]
+                    for sent in re.split(r'[。；;?\n]', content):
+                        sent = sent.strip()
+                        if len(sent) < 8:
+                            continue
+                        if "?" in sent or "？" in sent or any(kw in sent for kw in concern_kw):
+                            blind_spots.append(sent[:80])
+                            if len(blind_spots) >= 3:
+                                break
 
             # 提取核心观点：选最有观点性的句子（而非第一句）
             key_point = ReportAgent._pick_opinionated_sentence(content)

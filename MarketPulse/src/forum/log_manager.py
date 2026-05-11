@@ -1,11 +1,12 @@
 import os
 import threading
+from pathlib import Path
 from datetime import datetime
 
 class LogManager:
-    def __init__(self, task_id: str, log_dir: str = "logs"):
+    def __init__(self, task_id: str, log_dir: str = None):
         self.task_id = task_id
-        self.log_dir = log_dir
+        self.log_dir = log_dir or str(Path(__file__).parent.parent.parent / "logs")
         self.log_file = os.path.join(self.log_dir, f"forum_{task_id}.log")
         self.lock = threading.Lock()
         self.latest_host_msg = ""

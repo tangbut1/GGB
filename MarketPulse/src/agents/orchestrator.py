@@ -83,7 +83,16 @@ class OrchestratorAgent:
         if trend_res.get("status") == "error":
             error_log.append(f"TrendAgent: {trend_res.get('summary', '趋势预测异常')}")
             self._emit("error", {"stage": "trend", "message": trend_res.get('summary', '趋势预测异常')})
-            # 趋势预测失败不终止，继续报告生成
+            # 趋势预测失败不终止，注入降级趋势摘要防止下游拿到空 dict
+            trend_res.setdefault("data", {})
+            trend_res["data"].setdefault("trend_summary", {
+                "trend_direction": "unknown",
+                "confidence": 0.0,
+                "data_quality": "预测失败",
+                "data_note": f"趋势预测异常: {trend_res.get('summary', '未知错误')}",
+                "forecast_window": 0,
+            })
+            trend_res["data"].setdefault("trend_results", {"predictions": []})
         self._emit("agent_update", {"agent": "TrendAgent", "status": "done", "progress": 66})
 
         # ── 等待 Monitor 触发 Host 总结 ──
@@ -136,7 +145,8 @@ class OrchestratorAgent:
         # 生成 HTML 报告文件
         from ..report.export_html import export_html_report
         report_data = report_res.get("data", {}).get("report_data", {})
-        output_path = f"results/reports/{self.task_id}.html"
+        results_dir = self.config.get("data", {}).get("results_dir", "results")
+        output_path = f"{results_dir}/reports/{self.task_id}.html"
         export_html_report(report_data, output_path)
 
         self._emit("agent_update", {"agent": "ReportAgent", "status": "done", "progress": 100})

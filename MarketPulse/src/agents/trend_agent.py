@@ -88,6 +88,3 @@ class TrendAgent(BaseAgent):
             "summary": insight if ("Error" not in insight and insight) else f"趋势预测完成，方向 {direction}（数据质量: {data_quality}）"
         }
 
-if __name__ == "__main__":
-    import streamlit as st
-    st.title("TrendAgent 独立测试")

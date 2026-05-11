@@ -292,6 +292,12 @@ def analyze():
             })
         finally:
             monitor.stop()
+            # 清理上传产生的临时 CSV，防止磁盘膨胀
+            if local_data_path and local_data_path.startswith("data/uploads/"):
+                try:
+                    os.remove(local_data_path)
+                except OSError:
+                    pass
             socketio.emit('task_complete', {
                 'task_id': task_id,
                 'status': tasks[task_id]["status"],

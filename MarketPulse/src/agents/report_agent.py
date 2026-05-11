@@ -178,24 +178,32 @@ class ReportAgent(BaseAgent):
             r'\[[\d\-:\s]+\]\s*\[(HOST|CollectAgent|SentimentAgent|TrendAgent|ReportAgent)\]\s*\[Round\s*(\d+)\]\s*(.+)'
         )
 
-        # ── Step A: 解析 ──
+        # ── Step A: 解析（状态机，多行 agent 内容追加到当前 entry）──
         entries = []
+        current_entry = None
         for line in forum_log:
             line = line.strip()
             if not line or "--- Forum Log" in line:
                 continue
             m = agent_pattern.match(line)
-            if not m:
-                continue
-            agent, round_num, content = m.group(1), int(m.group(2)), m.group(3).strip()
-            if len(content) < 5:
-                continue
-            entries.append({"agent": agent, "round": round_num, "content": content})
+            if m:
+                if current_entry and len(current_entry["content"]) >= 5:
+                    entries.append(current_entry)
+                agent, round_num, content = m.group(1), int(m.group(2)), m.group(3).strip()
+                current_entry = {"agent": agent, "round": round_num, "content": content}
+            elif current_entry:
+                # 续行：追加到当前 entry（处理 agent 多行输出）
+                current_entry["content"] += "\n" + line
+        # 最后一个 entry
+        if current_entry and len(current_entry["content"]) >= 5:
+            entries.append(current_entry)
 
-        # ── Step B: 过滤过程日志 ──
+        # ── Step B: 过滤过程日志（HOST 不过滤）──
         process_kw = ["补充词", "新数据", "采集完成", "开始采集", "搜索完成",
                       "已采集", "源返回", "共获得", "搜索关键词", "开始搜索"]
         def _is_process_log(e):
+            if e["agent"] == "HOST":
+                return False
             if e["agent"] == "CollectAgent":
                 if any(kw in e["content"] for kw in process_kw):
                     return True
@@ -274,22 +282,34 @@ class ReportAgent(BaseAgent):
             cleaned = re.sub(r'\*{1,3}(.*?)\*{1,3}', r'\1', cleaned)
 
             # summary: 第一句非空话的完整句子
-            bland_prefixes = ["以下是基于", "趋势综述", "以下为", "综合分析", "基于以上", "综合来看",
-                              "总体而言", "据分析", "根据当前", "据此"]
+            bland_fragments = ["好的，以下", "好的，下面", "好的，接下来",
+                               "以下是基于", "以下是基于现有", "基于现有数据与模型",
+                               "下面是基于", "以下报告基于", "趋势综述", "以下为",
+                               "综合分析", "基于以上", "综合来看", "总体而言",
+                               "据分析", "根据当前", "据此"]
+            def _is_bland(sentence):
+                return any(frag in sentence for frag in bland_fragments)
+
             summary = ""
             sentences = re.split(r'[。！？]', cleaned)
             for s in sentences:
                 s = s.strip()
                 if len(s) < 8:
                     continue
-                if any(s.startswith(bp) for bp in bland_prefixes):
+                if _is_bland(s):
                     continue
                 if re.match(r'^[\d#\*\s]+', s):
                     continue
                 summary = s[:60]
                 break
             if not summary:
-                summary = cleaned[:60]
+                # fallback: 取 content 最长一行（跳过极短行和 bland 行）
+                lines = [l.strip() for l in cleaned.split('\n') if len(l.strip()) > 8]
+                best = ""
+                for l in lines:
+                    if not _is_bland(l) and len(l) > len(best):
+                        best = l
+                summary = (best or cleaned)[:60]
 
             # highlights: 2-3 条质量句子
             highlights = []
@@ -299,7 +319,7 @@ class ReportAgent(BaseAgent):
                     continue
                 if re.match(r'^[\d#\*\s\-]+', s):
                     continue
-                if any(s.startswith(bp) for bp in bland_prefixes):
+                if _is_bland(s):
                     continue
                 if s == summary:
                     continue

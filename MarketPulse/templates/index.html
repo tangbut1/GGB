@@ -498,7 +498,8 @@ body.graph-resizing * { cursor:col-resize !important; }
 .g-dt-locate:hover { border-color:var(--ac); color:var(--ac); }
 .g-dt-close { width:22px; height:22px; border-radius:5px; border:1px solid transparent; background:none; color:var(--tx2); cursor:pointer; display:flex; align-items:center; justify-content:center; font-size:14px; transition:all .15s; }
 .g-dt-close:hover { border-color:var(--rd); color:var(--rd); }
-.g-dt-body { flex:1; overflow-y:auto; min-height:0; position:relative; }
+.g-dt-body { flex:1; overflow-y:auto; min-height:0; position:relative; word-break:break-word; white-space:normal; }
+.g-dt-body * { word-break:break-word; white-space:normal; max-width:100%; }
 .g-dt-empty { display:flex; flex-direction:column; align-items:center; justify-content:center; position:absolute; inset:0; gap:8px; padding:20px; }
 .g-dt-empty svg { opacity:.3; flex-shrink:0; }
 .g-dt-empty h4 { font-size:13px; color:var(--tx2); margin:0; }
@@ -2197,7 +2198,12 @@ function graphBuildNetwork() {
     return {from:e.from, to:e.to, type:e.rel||e.type, color:ec, width:edgeWidth, dashes:dashes, arrows:{to:{enabled:true,scaleFactor:.6}}, smooth:{type:'curvedCW',roundness:.15}};
   });
 
-  if (visNetwork){visNetwork.destroy();visNetwork=null;}
+  if (visNetwork){visNetwork.destroy();visNetwork=null;graphNodesDS=null;graphEdgesDS=null;}
+  // 节点数据清洗：过滤空 ID/空 label
+  nodesData = nodesData.filter(function(n){return n && n.id;}).map(function(n){
+    n.label = (n.label && n.label.trim()) ? n.label.trim().slice(0, 20) : (n.id || "事件");
+    return n;
+  });
   graphNodesDS = new vis.DataSet(nodesData);
   graphEdgesDS = new vis.DataSet(edgesData);
 
@@ -2241,7 +2247,6 @@ function graphGetLayout(mode) {
     return {
       physics:{enabled:physicsEnabled, stabilization:{iterations:150,fit:true}, repulsion:{nodeDistance:150, springLength:200, centralGravity:.3, damping:.09}},
       interaction:{hover:true, tooltipDelay:200, navigationButtons:false},
-      layout:{improvedLayout:true}
     };
   }
   // timeline / platform — physics off, manual positions

@@ -1,14 +1,16 @@
 from typing import Dict, Any
 from .base_agent import BaseAgent
+from .. import config as cfg
 from ..analysis.trend_prediction import TrendPredictor
 
 class TrendAgent(BaseAgent):
     def _get_system_prompt(self) -> str:
         return (
-            "你是一名专业的舆情趋势分析师(TrendAgent)。"
-            "结合时序模型的预测方向和论坛中他人的意见，"
-            "给出对未来走势的预测和建议。"
-            "数据量越大，趋势判断越可靠；特别注意识别情感突变点和讨论量暴增点。"
+            "你是一名具备【定性因果推断】能力的顶级趋势分析AI(TrendAgent)。"
+            "如果基础时序模型因为数据量少（如仅有单日数据）而给出低置信度的判断，"
+            "你必须立即放弃死板的曲线外推，改用因果逻辑进行深度推演："
+            "识别事件的【触发因子 -> 核心争议点 -> 传播裂变层 -> 可能的次生危机】，"
+            "并结合历史同类事件规律，给出前瞻性的走势推判。"
         )
 
     def run(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -35,8 +37,13 @@ class TrendAgent(BaseAgent):
             data_note = "数据量偏少，趋势仅供方向性参考，不建议作为唯一决策依据。"
 
         predictor = TrendPredictor()
-        # 动态调整预测窗口：数据跨度越大，预测越远
-        predictor.forecast_periods = 30 if total_count >= 200 else 14 if total_count >= 100 else 7
+        base_periods = cfg.analysis_forecast_periods()
+        if total_count >= 200:
+            predictor.forecast_periods = base_periods
+        elif total_count >= 100:
+            predictor.forecast_periods = max(7, base_periods // 2)
+        else:
+            predictor.forecast_periods = max(5, base_periods // 4)
         trend_results = predictor.analyze_market_sentiment_trend(analyzed_news)
         trend_summary = predictor.get_trend_summary(trend_results)
 
@@ -61,10 +68,10 @@ class TrendAgent(BaseAgent):
         if feedback:
             llm_prompt += f"【主持人指引】{feedback}\n"
         llm_prompt += (
-            "请按以下结构输出你的趋势分析：\n"
-            "1. 趋势综述（一句概括当前态势）\n"
-            "2. 关键发现（识别至少1个情感突变点或讨论量异常点）\n"
-            "3. 后市预判（结合数据量的可靠性说明，给出未来走势判断）"
+            "请按以下结构输出你的科学趋势分析：\n"
+            "1. 因果推断综述（分析事件链条：触发点->当前态势->下一个可能的引爆点）\n"
+            "2. 关键发现（跳出数字表象，指出核心情绪驱动力与异常线索）\n"
+            "3. 后市沙盘推演（无论数据多少，基于事理逻辑，推演未来3-7天的2种可能走向及应对策略）"
         )
 
         insight = self.call_llm(llm_prompt)

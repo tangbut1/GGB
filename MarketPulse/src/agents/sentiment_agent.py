@@ -7,11 +7,10 @@ from ..analysis.sentiment_analysis import SentimentAnalyzer
 class SentimentAgent(BaseAgent):
     def _get_system_prompt(self) -> str:
         return (
-            "你是一个金融情感分析师(SentimentAgent)。"
-            "你会收到基础的情绪打分结果和新闻样本，你需要进行深度定性解读，"
-            "并输出结构化的情感分布校正结果。"
-            "SnowNLP 等自动化工具对财经/政治类中文文本有严重正向偏置，"
-            "你的任务是校正这个偏差，给出真实的情感分布。"
+            "你是一个顶级量化基金的情绪分析AI(SentimentAgent)。"
+            "你的任务是直接阅读最新的核心新闻样本全文或摘要，并以极度敏锐和客观的视角，"
+            "判断市场当前的真实情绪。你要识别出隐藏在官方套话下的负面情绪（如愤怒、恐慌、维权），"
+            "以及真实的正面情绪。不要受任何第三方算法误导，你的判断就是最终权威。"
         )
 
     def run(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -25,30 +24,28 @@ class SentimentAgent(BaseAgent):
         analyzed_news = analyzer.analyze_news_batch(news_data)
         algo_summary = analyzer.get_sentiment_summary(analyzed_news)
 
-        # ── LLM 校正情感分布 ──
-        sample_news = analyzed_news[:25]
+        # ── 纯 LLM 多维情感基准线推演 ──
+        # 我们不再依赖 SnowNLP，而是让大模型接管核心样本的情感判定
+        sample_news = analyzed_news[:35]  # 取前35条核心新闻
         samples_text = []
         for i, n in enumerate(sample_news):
             title = n.get("title", "")
-            algo_label = n.get("sentiment_label", "neutral")
-            algo_score = n.get("sentiment_score", 0)
-            samples_text.append(
-                f"{i+1}. [{algo_label} {algo_score:+.2f}] {title[:80]}"
-            )
+            summary = n.get("summary", "")[:100]
+            samples_text.append(f"{i+1}. {title} | {summary}")
 
         llm_prompt = (
-            f"共 {len(analyzed_news)} 条新闻，SnowNLP 算法结果："
-            f"积极 {algo_summary.get('positive_count')} 条, "
-            f"中性 {algo_summary.get('neutral_count')} 条, "
-            f"负面 {algo_summary.get('negative_count')} 条。\n\n"
-            f"⚠️ SnowNLP 对中文财经/政治文本存在严重正向偏置，"
-            f"大量负面内容被误标为中性或正面。"
-            f"请根据样本逐条校正情感标签。\n\n"
-            f"前25条样本：\n" + "\n".join(samples_text) + "\n\n"
-            f"输出 JSON（只输出 JSON）：\n"
-            f'{{"corrected_positive": 数字, "corrected_negative": 数字, '
-            f'"corrected_neutral": 数字, "corrected_avg_score": -1到1之间的数字, '
-            f'"key_finding": "一句话核心发现"}}'
+            f"我们共采集到了 {len(news_data)} 条新闻数据。以下是排名前35的核心样本：\n\n"
+            f"{'\n'.join(samples_text)}\n\n"
+            f"请仔细分析这些内容，计算真实的情感分布。请注意：\n"
+            f"1. 对营销陷阱、涉嫌违规、投诉争议等，必须严格判定为【负面】（悲观/愤怒/恐慌）。\n"
+            f"2. 中性报道、正常政务、无明确情绪的公关稿件，判定为【中性】。\n"
+            f"3. 只有真实的利好、重大突破、积极反馈，才能判定为【正面】。\n\n"
+            f"输出一个纯 JSON（不要 Markdown）：\n"
+            f'{{"corrected_positive": 预计这{len(news_data)}条中真正的正面数量, '
+            f'"corrected_negative": 预计这{len(news_data)}条中真正的负面数量, '
+            f'"corrected_neutral": 预计中性数量, '
+            f'"corrected_avg_score": -1.0 到 1.0 的平均情绪分, '
+            f'"key_finding": "一句话说明你为何给出这样的情感分布判定（指出核心情绪驱动因素）"}}'
         )
         if feedback:
             llm_prompt += f"\n主持人指引: {feedback}"
@@ -74,7 +71,7 @@ class SentimentAgent(BaseAgent):
         insight = corrected.get("key_finding", "")
         if insight and "Error" not in insight:
             self.write_to_forum_log(
-                f"情绪分析完成（LLM校正后：正面{corrected['positive_count']}/"
+                f"全量大模型多维情绪分析完成（真实判定：正面{corrected['positive_count']}/"
                 f"负面{corrected['negative_count']}/中性{corrected['neutral_count']}）。"
                 f"核心发现: {insight}"
             )

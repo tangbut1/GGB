@@ -42,8 +42,8 @@ torch>=2.4.1; platform_system!="Windows" or platform_machine!="AMD64"
 torchaudio>=2.4.1; platform_system!="Windows" or platform_machine!="AMD64"
 torchvision>=0.19.1; platform_system!="Windows" or platform_machine!="AMD64"
 
-# Flask 后端和实时通信
-flask>=3.0.0
-flask-socketio>=5.3.6
-eventlet>=0.33.3
 pyyaml>=6.0.1
+
+# Console Workstation (TUI)
+textual>=0.80.0
+pyvis>=0.3.0

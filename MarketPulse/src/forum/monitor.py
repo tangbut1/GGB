@@ -1,54 +1,99 @@
-import time
 import threading
-from .llm_host import LLMHost
+from .. import config as cfg
+
 
 class ForumMonitor:
+    """Event-driven forum monitor.
+
+    LogManager.write() → Monitor.on_message_written() → check threshold
+    → trigger Host LLM in background thread.
+
+    Idle timeout is handled via Condition.wait() instead of sleep-polling.
+    The daemon thread still exists for idle-timeout detection, but it no
+    longer reads files — it purely waits on a condition variable.
+    """
+
     def __init__(self, log_manager, config: dict):
         self.log_manager = log_manager
         self.config = config
-        self.llm_host = LLMHost(config.get("agent_llm", {}).get("forum_host", {}))
+        forum_cfg = config.get("agent_llm", {}).get("forum_host", {})
+        self.trigger_threshold = forum_cfg.get("trigger_threshold", cfg.forum_trigger_threshold())
         self.running = False
         self.thread = None
-        self.trigger_threshold = config.get("agent_llm", {}).get("forum_host", {}).get("trigger_threshold", 5)
-        
+
+        # Event-driven state
+        self._agent_msg_count = 0
+        self._condition = threading.Condition()
+        self.host_guidance_event = threading.Event()
+
+        # LLM Host (created once, lazy)
+        self._llm_host = None
+
     def start(self):
         self.running = True
-        self.thread = threading.Thread(target=self._monitor_loop, daemon=True)
+        self.thread = threading.Thread(target=self._idle_timeout_loop, daemon=True)
         self.thread.start()
-        
+
     def stop(self):
         self.running = False
+        with self._condition:
+            self._condition.notify_all()
         if self.thread:
             self.thread.join(timeout=1.0)
-            
-    def _monitor_loop(self):
-        last_processed_line = 0
-        agent_msg_count = 0
-        last_msg_time = time.time()
-        
+
+    def on_message_written(self, agent_name: str):
+        """Called by LogManager.write() on every log append (event-driven)."""
+        if agent_name in ("HOST", "SYSTEM"):
+            return
+
+        with self._condition:
+            self._agent_msg_count += 1
+            if self._agent_msg_count >= self.trigger_threshold:
+                self._agent_msg_count = 0
+                # Trigger Host in background thread
+                threading.Thread(target=self._trigger_host, daemon=True).start()
+            self._condition.notify_all()
+
+    def mark_host_guidance_ready(self):
+        self.host_guidance_event.set()
+
+    def wait_for_host_guidance(self, timeout: float = 15.0) -> str:
+        skip = ("【HOST错误】", "【HOST提示】", "[LLM不可用]")
+        existing = self.log_manager.get_latest_host_guidance()
+        if existing and not any(existing.startswith(m) for m in skip):
+            return existing
+        if self.host_guidance_event.wait(timeout=timeout):
+            result = self.log_manager.get_latest_host_guidance()
+            if result and not any(result.startswith(m) for m in skip):
+                return result
+        return ""
+
+    def _idle_timeout_loop(self):
+        """Daemon thread: wake on notification or idle timeout to trigger Host."""
         while self.running:
-            lines = self.log_manager.read_all_lines()
-            new_lines = lines[last_processed_line:]
-            
-            if new_lines:
-                for line in new_lines:
-                    if "[HOST]" not in line and "[SYSTEM]" not in line and "--- Forum" not in line:
-                        agent_msg_count += 1
-                        last_msg_time = time.time()
-                last_processed_line = len(lines)
-                
-            time_since_last_msg = time.time() - last_msg_time
-            
-            # 触发条件：消息大于阈值，或者消息>0且距离上一次有一段时间
-            if agent_msg_count >= self.trigger_threshold or (agent_msg_count > 0 and time_since_last_msg > 10):
-                # 子线程异步调用，避免 HTTP 请求阻塞 Monitor 主循环导致日志推送卡顿
-                threading.Thread(target=self._trigger_host, args=(list(lines),), daemon=True).start()
-                agent_msg_count = 0
-                
-            time.sleep(1)
-            
-    def _trigger_host(self, all_lines: list):
-        context = "".join(all_lines[-20:]) # 截取最近20行
-        summary = self.llm_host.generate_guidance(context)
+            with self._condition:
+                # Wait up to 10s for new messages
+                self._condition.wait(timeout=10)
+                if not self.running:
+                    return
+                # Idle timeout: any pending messages after 10s silence
+                if self._agent_msg_count > 0:
+                    self._agent_msg_count = 0
+                    threading.Thread(target=self._trigger_host, daemon=True).start()
+
+    def _trigger_host(self):
+        """Read recent log lines and ask Host LLM to generate guidance."""
+        if self._llm_host is None:
+            from .llm_host import LLMHost
+            forum_cfg = self.config.get("agent_llm", {}).get("forum_host", {})
+            self._llm_host = LLMHost(forum_cfg)
+
+        lines = self.log_manager.read_all_lines()
+        context = "".join(lines[-20:])
+        summary = self._llm_host.generate_guidance(context)
+
         if summary:
-            self.log_manager.write("HOST", 1, summary)
+            skip_markers = ("【HOST错误】", "【HOST提示】", "[LLM不可用]")
+            if not any(summary.startswith(m) for m in skip_markers):
+                self.log_manager.write("HOST", 1, summary)
+            self.mark_host_guidance_ready()

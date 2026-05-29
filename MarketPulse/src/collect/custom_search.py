@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import re
 import time
+import email.utils
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -154,6 +155,8 @@ class CustomSearchCollector:
             publish_dt = item.pop("_publish_dt", None)
             if isinstance(publish_dt, datetime):
                 item["publish_time"] = publish_dt.strftime("%Y-%m-%d %H:%M")
+            else:
+                item["publish_time"] = item.get("publish_time", "") or "刚刚" 
 
         deduplicated.sort(key=lambda x: x.get("publish_time", ""), reverse=True)
         logger.success("🎉 搜索完成！共获取 {} 条相关新闻（3 层回退）", len(deduplicated))
@@ -195,13 +198,12 @@ class CustomSearchCollector:
                 logger.info("使用 DuckDuckGo 搜索 {}（第 {} 次尝试，region={}）", keyword, attempt, region or "无限制")
                 with DDGS(timeout=15 + attempt * 5) as ddgs:
                     kwargs = dict(
-                        keywords=keyword,
                         safesearch="moderate",
                         max_results=max_results,
                     )
                     if region:
                         kwargs["region"] = region
-                    for item in ddgs.news(**kwargs):
+                    for item in ddgs.news(keyword, **kwargs):
                         title = (item.get("title") or "").strip()
                         url = (item.get("url") or item.get("link") or "").strip()
                         if not title or not url:
@@ -224,7 +226,7 @@ class CustomSearchCollector:
                                 "publish_time": item.get("date", ""),
                                 "category": "自定义搜索",
                                 "search_keyword": keyword,
-                                "_publish_dt": publish_dt or datetime.now(),
+                                "_publish_dt": publish_dt,
                             }
                         )
                 if results:
@@ -508,10 +510,9 @@ class CustomSearchCollector:
         if not tasks:
             return
 
-        max_items = min(len(tasks), 12)
-        selected = tasks[:max_items]
+        selected = tasks  # No limit, enrich all collected news
 
-        with ThreadPoolExecutor(max_workers=self.max_workers) as executor:
+        with ThreadPoolExecutor(max_workers=max(10, self.max_workers * 2)) as executor:
             future_map = {
                 executor.submit(self._extract_article_text, item["link"]): item for item in selected
             }
@@ -530,18 +531,37 @@ class CustomSearchCollector:
                     item["summary"] = summary
 
     def _extract_article_text(self, url: str) -> Tuple[str, str]:
-        """从文章页面中提取正文与摘要。"""
-        resp = self.session.get(url, timeout=15)
-        resp.raise_for_status()
+        """从文章页面中提取正文与摘要（含指数退避重试与强力清洗）。"""
+        import time
+        for attempt in range(1, 4):
+            try:
+                resp = self.session.get(url, timeout=10 + attempt * 5)
+                resp.raise_for_status()
+                break
+            except Exception as e:
+                if attempt == 3:
+                    return "", ""
+                time.sleep(1.5 ** attempt)
 
         soup = BeautifulSoup(resp.text, "html.parser")
+        
+        # 移除噪声标签
+        for tag in soup(["script", "style", "noscript", "header", "footer", "nav", "aside", "meta"]):
+            tag.decompose()
 
-        paragraphs = [p.get_text(" ", strip=True) for p in soup.find_all("p")]
-        paragraphs = [p for p in paragraphs if p]
-        if not paragraphs:
+        paragraphs = [p.get_text(" ", strip=True) for p in soup.find_all(["p", "div", "article", "section"])]
+        # 去重并过滤短句
+        valid_p = []
+        seen = set()
+        for p in paragraphs:
+            if len(p) > 20 and p not in seen:
+                seen.add(p)
+                valid_p.append(p)
+                
+        if not valid_p:
             return "", ""
 
-        text = "\n".join(paragraphs)
+        text = "\n".join(valid_p)
         text = re.sub(r"\s+", " ", text).strip()
 
         # 生成摘要
@@ -578,6 +598,12 @@ class CustomSearchCollector:
             dt = datetime.fromisoformat(value)
             return dt.replace(tzinfo=None)
         except Exception:  # noqa: BLE001
+            pass
+            
+        try:
+            dt = email.utils.parsedate_to_datetime(value)
+            return dt.replace(tzinfo=None)
+        except Exception:
             pass
 
         for fmt in iso_formats:

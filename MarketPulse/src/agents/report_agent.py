@@ -67,11 +67,6 @@ class ReportAgent(BaseAgent):
         ai_insights["forum_debate"] = forum_debate
         report_data["ai_insights"] = ai_insights
 
-        # 生成结构化 debate_cards（供前端辩论区直接渲染）
-        debate_cards = self._generate_debate_cards(forum_log, sentiment_summary, trend_summary)
-        report_data["debate_cards"] = debate_cards
-        ai_insights["debate_cards"] = debate_cards
-
         return {
             "status": "success",
             "agent": self.name,
@@ -167,179 +162,6 @@ class ReportAgent(BaseAgent):
         }.get(e["agent"], 5)))
 
         return debate_entries
-
-    @staticmethod
-    def _generate_debate_cards(forum_log: list, sentiment_summary: dict, trend_summary: dict) -> list:
-        """从 forum.log 生成结构化辩论卡片，过滤过程日志，按 agent+round 合并，heuristic 生成 summary + highlights"""
-        if not forum_log:
-            return []
-
-        agent_pattern = re.compile(
-            r'\[[\d\-:\s]+\]\s*\[(HOST|CollectAgent|SentimentAgent|TrendAgent|ReportAgent)\]\s*\[Round\s*(\d+)\]\s*(.+)'
-        )
-
-        # ── Step A: 解析（状态机，多行 agent 内容追加到当前 entry）──
-        entries = []
-        current_entry = None
-        for line in forum_log:
-            line = line.strip()
-            if not line or "--- Forum Log" in line:
-                continue
-            m = agent_pattern.match(line)
-            if m:
-                if current_entry and len(current_entry["content"]) >= 5:
-                    entries.append(current_entry)
-                agent, round_num, content = m.group(1), int(m.group(2)), m.group(3).strip()
-                current_entry = {"agent": agent, "round": round_num, "content": content}
-            elif current_entry:
-                # 续行：追加到当前 entry（处理 agent 多行输出）
-                current_entry["content"] += "\n" + line
-        # 最后一个 entry
-        if current_entry and len(current_entry["content"]) >= 5:
-            entries.append(current_entry)
-
-        # ── Step B: 过滤过程日志（HOST 不过滤）──
-        process_kw = ["补充词", "新数据", "采集完成", "开始采集", "搜索完成",
-                      "已采集", "源返回", "共获得", "搜索关键词", "开始搜索"]
-        def _is_process_log(e):
-            if e["agent"] == "HOST":
-                return False
-            if e["agent"] == "CollectAgent":
-                if any(kw in e["content"] for kw in process_kw):
-                    return True
-            return False
-
-        clean_entries = [e for e in entries if not _is_process_log(e)]
-
-        # ── Step C: 按 agent+round 合并 ──
-        agent_icon_map = {
-            "CollectAgent": "📡", "SentimentAgent": "💬",
-            "TrendAgent": "📈", "ReportAgent": "📄", "HOST": "🧑‍⚖️"
-        }
-        agent_label_map = {
-            "CollectAgent": "采集Agent", "SentimentAgent": "情感Agent",
-            "TrendAgent": "趋势Agent", "ReportAgent": "报告Agent", "HOST": "论坛主持人"
-        }
-        # 排序优先级
-        priority_map = {"HOST": 0, "TrendAgent": 1, "SentimentAgent": 2, "CollectAgent": 3, "ReportAgent": 4}
-
-        grouped = {}
-        for e in clean_entries:
-            key = (e["agent"], e["round"])
-            if key not in grouped:
-                grouped[key] = []
-            grouped[key].append(e)
-
-        cards = []
-        for (agent, rnd), items in sorted(grouped.items(), key=lambda x: (x[0][1], priority_map.get(x[0][0], 9))):
-            if agent == "HOST":
-                # 只取该 round 最后一条 HOST
-                selected = items[-1]
-            elif agent == "CollectAgent":
-                # 优先取结论行（含采集完毕/共获取/有效数据/平台分布/采集完成/共采集/总计）
-                conclusion_kw = ["采集完毕", "共获取", "有效数据", "平台分布", "采集完成", "共采集", "总计"]
-                selected = None
-                for it in items:
-                    if any(kw in it["content"] for kw in conclusion_kw):
-                        selected = it
-                        break
-                if not selected:
-                    selected = max(items, key=lambda it: len(it["content"]))
-            elif agent in ("SentimentAgent", "TrendAgent", "ReportAgent"):
-                # 取该 round 最后一条
-                selected = items[-1]
-            else:
-                selected = items[-1]
-
-            # ── Step D: heuristic summary + highlights ──
-            body = selected["content"]
-            # HOST 盲区提取（复用已有正则）
-            blind_spots = []
-            if agent == "HOST":
-                for m2 in re.finditer(r'@(\w+)\s*[:：]?\s*([^@]+?)(?=@|【|$)', body):
-                    spot = m2.group(2).strip()
-                    if len(spot) > 3:
-                        blind_spots.append(spot)
-                guide_match = re.search(r'【盲区引导】[：:]\s*(.+)', body)
-                if guide_match:
-                    for p in re.split(r'[@\n]', guide_match.group(1)):
-                        p = p.strip()
-                        if len(p) > 3 and p not in blind_spots:
-                            blind_spots.append(p)
-                if not blind_spots:
-                    concern_kw = ["不足", "风险", "注意", "遗漏", "忽视", "缺失", "待验证", "不确定", "未知"]
-                    for sent in re.split(r'[。；;?\n]', body):
-                        sent = sent.strip()
-                        if len(sent) < 8:
-                            continue
-                        if any(kw in sent for kw in concern_kw):
-                            blind_spots.append(sent[:80])
-                            if len(blind_spots) >= 3:
-                                break
-
-            # 清洗文本用于提取
-            cleaned = re.sub(r'^#{1,6}\s+', '', body, flags=re.MULTILINE)
-            cleaned = re.sub(r'\*{1,3}(.*?)\*{1,3}', r'\1', cleaned)
-
-            # summary: 第一句非空话的完整句子
-            bland_fragments = ["好的，以下", "好的，下面", "好的，接下来",
-                               "以下是基于", "以下是基于现有", "基于现有数据与模型",
-                               "下面是基于", "以下报告基于", "趋势综述", "以下为",
-                               "综合分析", "基于以上", "综合来看", "总体而言",
-                               "据分析", "根据当前", "据此"]
-            def _is_bland(sentence):
-                return any(frag in sentence for frag in bland_fragments)
-
-            summary = ""
-            sentences = re.split(r'[。！？]', cleaned)
-            for s in sentences:
-                s = s.strip()
-                if len(s) < 8:
-                    continue
-                if _is_bland(s):
-                    continue
-                if re.match(r'^[\d#\*\s]+', s):
-                    continue
-                summary = s[:60]
-                break
-            if not summary:
-                # fallback: 取 content 最长一行（跳过极短行和 bland 行）
-                lines = [l.strip() for l in cleaned.split('\n') if len(l.strip()) > 8]
-                best = ""
-                for l in lines:
-                    if not _is_bland(l) and len(l) > len(best):
-                        best = l
-                summary = (best or cleaned)[:60]
-
-            # highlights: 2-3 条质量句子
-            highlights = []
-            for s in sentences:
-                s = s.strip()
-                if len(s) < 15:
-                    continue
-                if re.match(r'^[\d#\*\s\-]+', s):
-                    continue
-                if _is_bland(s):
-                    continue
-                if s == summary:
-                    continue
-                highlights.append(s[:80])
-                if len(highlights) >= 3:
-                    break
-
-            cards.append({
-                "agent": agent,
-                "agent_label": agent_label_map.get(agent, agent),
-                "agent_icon": agent_icon_map.get(agent, "📋"),
-                "round": rnd,
-                "summary": summary,
-                "highlights": highlights,
-                "full_text": cleaned[:500],
-                "blind_spots": blind_spots,
-                "priority": priority_map.get(agent, 9),
-            })
-
-        return cards
 
     @staticmethod
     def _pick_opinionated_sentence(content: str) -> str:
@@ -506,15 +328,14 @@ class ReportAgent(BaseAgent):
 
         system_prompt = """你是一个 JSON 输出机。你的回答必须以 { 开头、以 } 结尾，只输出一段合法的 JSON。
 
-你是顶级对冲基金的首席舆情分析师，你的判断直接影响千万级投资决策。
+你是顶级对冲基金的首席舆情分析师，你的判断直接影响千万级投资决策。你现在需要独立撰写一份关于该话题的【专业AI深度解读研报】，严格按照数据采集说明、核心数据分析、AI趋势预测的三段式结构进行。
+严禁复述前端的论坛日志信息，必须给出独立视角的专业分析！
 
 【铁律】
-1. 禁止输出任何非 JSON 内容，包括 Markdown 标题、代码块标记、解释性文字
-2. 只输出一个 JSON 对象，第一个字符是 {，最后一个字符是 }
-3. 如果输出非 JSON 内容，你的回答将被完全丢弃
-4. 必须包含至少1个反直觉或反共识的观点，标记 contrarian: true
-5. 禁止使用以下词汇：整体均衡、值得关注、总体来看、有所提升、存在一定、较为、相对
-6. 每个 claim 必须是可被证伪的具体判断
+1. 禁止输出任何非 JSON 内容，包括 Markdown 标题、代码块标记、解释性文字。
+2. 只输出一个 JSON 对象，第一个字符是 {，最后一个字符是 }。
+3. 如果输出非 JSON 内容，你的回答将被完全丢弃。
+4. insights 数组必须包含 EXACTLY 3 个对象，严格按照 'data_source', 'analysis', 'prediction' 的顺序和类型输出。
 
 JSON 格式（严格遵循，不要修改 key 名）：
 {
@@ -522,12 +343,30 @@ JSON 格式（严格遵循，不要修改 key 名）：
     "action_signal": "strong_buy_attention | buy_attention | neutral | watch_out | alert",
     "insights": [
         {
-            "type": "opportunity | risk | anomaly | trend",
-            "title": "洞察标题，8字以内",
-            "claim": "具体判断，不超过50字",
-            "evidence": "数据或现象依据",
-            "why_now": "为什么现在重要，不超过30字",
-            "confidence": 0.0到1.0之间的数字,
+            "type": "data_source",
+            "title": "数据采集说明",
+            "claim": "说明数据从哪些平台采集、规模如何",
+            "evidence": "相关数据统计说明",
+            "why_now": "采样周期及有效性分析",
+            "confidence": 1.0,
+            "contrarian": false
+        },
+        {
+            "type": "analysis",
+            "title": "核心数据分析",
+            "claim": "基于情感和事件事实的多维度深层剖析",
+            "evidence": "提炼关键现象或事件事实作为依据",
+            "why_now": "为什么当前的情感/数据分布值得注意",
+            "confidence": 0.0到1.0的数字,
+            "contrarian": true或false
+        },
+        {
+            "type": "prediction",
+            "title": "AI趋势预测",
+            "claim": "结合以上数据，给出有前瞻性的未来趋势预测",
+            "evidence": "预测逻辑的支撑数据",
+            "why_now": "为什么现在给出这个预测",
+            "confidence": 0.0到1.0的数字,
             "contrarian": true或false
         }
     ],

@@ -2,15 +2,22 @@ import sys
 import os
 import time
 
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.forum.log_manager import LogManager
 from src.forum.monitor import ForumMonitor
-import yaml
 
 def load_config():
-    with open("src/config.yaml", "r", encoding="utf-8") as f:
-        return yaml.safe_load(f)
+    return {
+        "agent_llm": {
+            "forum_host": {
+                "trigger_threshold": 3,
+                "api_key": "sk-test",
+                "base_url": "http://127.0.0.1:9/v1",
+                "model": "test-model",
+            }
+        }
+    }
 
 def test_forum_mechanism():
     print("=== 测试论坛 Monitor 与 Host 触发机制 ===")
@@ -26,6 +33,13 @@ def test_forum_mechanism():
     
     manager = LogManager("test_task")
     monitor = ForumMonitor(manager, config)
+    manager.set_monitor(monitor)
+
+    # Inject mock LLMHost (event-driven monitor creates it lazily)
+    from src.forum.llm_host import LLMHost
+    mock_host = LLMHost(config["agent_llm"]["forum_host"])
+    mock_host.generate_guidance = lambda context: "【总结】：测试 Host 已触发\n【盲区引导】：@TrendAgent 继续验证"
+    monitor._llm_host = mock_host
     
     monitor.start()
     print("Monitor 已启动...")
@@ -43,6 +57,7 @@ def test_forum_mechanism():
     time.sleep(3)
     
     print("触发后的 Host 指引:", manager.get_latest_host_guidance())
+    assert "测试 Host 已触发" in manager.get_latest_host_guidance()
     
     monitor.stop()
     print("测试结束。")

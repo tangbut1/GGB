@@ -7,10 +7,12 @@ from ..analysis.sentiment_analysis import SentimentAnalyzer
 class SentimentAgent(BaseAgent):
     def _get_system_prompt(self) -> str:
         return (
-            "你是一个顶级量化基金的情绪分析AI(SentimentAgent)。"
-            "你的任务是直接阅读最新的核心新闻样本全文或摘要，并以极度敏锐和客观的视角，"
-            "判断市场当前的真实情绪。你要识别出隐藏在官方套话下的负面情绪（如愤怒、恐慌、维权），"
-            "以及真实的正面情绪。不要受任何第三方算法误导，你的判断就是最终权威。"
+            "你是一个极其悲观的危机分析师(Red Team / SentimentAgent)。\n"
+            "你会收到基础的情绪打分结果和新闻样本，你需要进行两项工作：\n"
+            "1. 输出结构化的情感分布校正结果（必须保留 JSON 格式用于图表渲染）。\n"
+            "2. 输出一篇极具对抗性的【危机研判报告】（Markdown格式）。\n"
+            "作为红方，你的职责是挑刺、放大数据中的负面情绪，推演最坏的连锁反应（如股市崩盘、赞助商撤资、公关危机）。\n"
+            "如果这是第二轮发言，你必须猛烈抨击蓝方(TrendAgent)的乐观预判！"
         )
 
     def run(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -24,28 +26,29 @@ class SentimentAgent(BaseAgent):
         analyzed_news = analyzer.analyze_news_batch(news_data)
         algo_summary = analyzer.get_sentiment_summary(analyzed_news)
 
-        # ── 纯 LLM 多维情感基准线推演 ──
-        # 我们不再依赖 SnowNLP，而是让大模型接管核心样本的情感判定
-        sample_news = analyzed_news[:35]  # 取前35条核心新闻
+        # ── LLM 校正情感分布 ──
+        sample_news = analyzed_news[:25]
         samples_text = []
         for i, n in enumerate(sample_news):
             title = n.get("title", "")
-            summary = n.get("summary", "")[:100]
-            samples_text.append(f"{i+1}. {title} | {summary}")
+            algo_label = n.get("sentiment_label", "neutral")
+            algo_score = n.get("sentiment_score", 0)
+            samples_text.append(
+                f"{i+1}. [{algo_label} {algo_score:+.2f}] {title[:80]}"
+            )
 
         llm_prompt = (
-            f"我们共采集到了 {len(news_data)} 条新闻数据。以下是排名前35的核心样本：\n\n"
-            f"{'\n'.join(samples_text)}\n\n"
-            f"请仔细分析这些内容，计算真实的情感分布。请注意：\n"
-            f"1. 对营销陷阱、涉嫌违规、投诉争议等，必须严格判定为【负面】（悲观/愤怒/恐慌）。\n"
-            f"2. 中性报道、正常政务、无明确情绪的公关稿件，判定为【中性】。\n"
-            f"3. 只有真实的利好、重大突破、积极反馈，才能判定为【正面】。\n\n"
-            f"输出一个纯 JSON（不要 Markdown）：\n"
-            f'{{"corrected_positive": 预计这{len(news_data)}条中真正的正面数量, '
-            f'"corrected_negative": 预计这{len(news_data)}条中真正的负面数量, '
-            f'"corrected_neutral": 预计中性数量, '
-            f'"corrected_avg_score": -1.0 到 1.0 的平均情绪分, '
-            f'"key_finding": "一句话说明你为何给出这样的情感分布判定（指出核心情绪驱动因素）"}}'
+            f"共 {len(analyzed_news)} 条新闻，SnowNLP 算法初始结果："
+            f"积极 {algo_summary.get('positive_count')} 条, 中性 {algo_summary.get('neutral_count')} 条, 负面 {algo_summary.get('negative_count')} 条。\n\n"
+            f"前25条样本：\n" + "\n".join(samples_text) + "\n\n"
+            f"请严格按以下格式输出（先 JSON，后 Markdown）：\n"
+            f"```json\n"
+            f'{{\n  "corrected_positive": 数字,\n  "corrected_negative": 数字,\n  "corrected_neutral": 数字,\n  "corrected_avg_score": 数字,\n  "key_finding": "一句话核心危机发现"\n}}\n'
+            f"```\n\n"
+            f"【红方视角：深度危机研判】\n"
+            f"1. 危机警报（一句话概括最大的风险）\n"
+            f"2. 极端情绪抓取（从样本中挑出最极端的负面情绪）\n"
+            f"3. 连锁破坏推演（推演最坏的商业/社会影响）\n"
         )
         if feedback:
             llm_prompt += f"\n主持人指引: {feedback}"
@@ -69,12 +72,12 @@ class SentimentAgent(BaseAgent):
             self._apply_label_correction(analyzed_news, corrected)
 
         insight = corrected.get("key_finding", "")
-        if insight and "Error" not in insight:
-            self.write_to_forum_log(
-                f"全量大模型多维情绪分析完成（真实判定：正面{corrected['positive_count']}/"
-                f"负面{corrected['negative_count']}/中性{corrected['neutral_count']}）。"
-                f"核心发现: {insight}"
-            )
+        markdown_report = corrected.get("markdown", "")
+        
+        if markdown_report:
+            self.write_to_forum_log(f"【总结】：{insight}\n\n{markdown_report}")
+        elif insight:
+            self.write_to_forum_log(f"【总结】：{insight}")
 
         return {
             "status": "success",
@@ -90,34 +93,31 @@ class SentimentAgent(BaseAgent):
         response = self.call_llm(prompt)
         response = (response or "").strip()
 
-        # 剥离 markdown 代码块
-        if response.startswith("```"):
-            response = re.sub(r"^```(?:json)?\s*\n?", "", response)
-            response = re.sub(r"\n?```\s*$", "", response)
-            response = response.strip()
+        # 尝试提取 JSON 和后面的 Markdown
+        json_str = response
+        markdown_str = ""
+        
+        # 如果包含 markdown block
+        json_match = re.search(r'```(?:json)?(.*?)```', response, re.DOTALL)
+        if json_match:
+            json_str = json_match.group(1).strip()
+            # 找到 JSON 块之后的内容作为 markdown
+            markdown_str = response[json_match.end():].strip()
+        else:
+            # 找大括号
+            first = response.find('{')
+            last = response.rfind('}')
+            if first != -1 and last != -1 and last > first:
+                json_str = response[first:last+1]
+                markdown_str = response[last+1:].strip()
 
-        # 多级 JSON 提取
         def try_parse(text):
             try:
                 return json.loads(text)
             except json.JSONDecodeError:
-                pass
-            first = text.find("{")
-            last = text.rfind("}")
-            if first != -1 and last != -1 and last > first:
-                try:
-                    return json.loads(text[first:last+1])
-                except json.JSONDecodeError:
-                    pass
-            match = re.search(r'\{.*\}', text, re.DOTALL)
-            if match:
-                try:
-                    return json.loads(match.group())
-                except json.JSONDecodeError:
-                    pass
-            return None
+                return None
 
-        result = try_parse(response)
+        result = try_parse(json_str)
         if result and "corrected_positive" in result:
             return {
                 "positive_count": int(result.get("corrected_positive", algo_summary.get("positive_count", 0))),
@@ -125,6 +125,7 @@ class SentimentAgent(BaseAgent):
                 "neutral_count": int(result.get("corrected_neutral", algo_summary.get("neutral_count", 0))),
                 "avg_sentiment": float(result.get("corrected_avg_score", algo_summary.get("avg_sentiment", 0))),
                 "key_finding": str(result.get("key_finding", "")),
+                "markdown": markdown_str
             }
 
         # LLM 返回纯文本时，用启发式调整

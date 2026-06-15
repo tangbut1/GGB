@@ -131,11 +131,6 @@ class TrendPredictor:
                 future = self.model.make_future_dataframe(periods=periods)
                 forecast = self.model.predict(future)
                 prediction_records = forecast[['ds', 'yhat', 'yhat_lower', 'yhat_upper']].tail(periods).to_dict('records')
-                for record in prediction_records:
-                    if hasattr(record['ds'], 'strftime'):
-                        record['ds'] = record['ds'].strftime('%Y-%m-%d')
-                    else:
-                        record['ds'] = str(record['ds'])
             else:
                 forecast, prediction_records = self._forecast_with_baseline(periods)
             
@@ -213,7 +208,7 @@ class TrendPredictor:
         combined = pd.concat([history_forecast, future_forecast], ignore_index=True) if not history_forecast.empty else future_forecast
         prediction_records = [
             {
-                'ds': row['ds'].strftime('%Y-%m-%d') if hasattr(row['ds'], 'strftime') else str(row['ds']),
+                'ds': row['ds'],
                 'yhat': float(row['yhat']),
                 'yhat_lower': float(row['yhat_lower']),
                 'yhat_upper': float(row['yhat_upper'])
@@ -297,11 +292,7 @@ class TrendPredictor:
             'trend_direction': prediction_result['trend_direction'],
             'confidence': prediction_result['confidence'],
             'predictions': prediction_result['predictions'],
-            'historical_data': [
-                {k: (v.strftime('%Y-%m-%d') if hasattr(v, 'strftime') else v)
-                 for k, v in rec.items()}
-                for rec in df.to_dict('records')
-            ],
+            'historical_data': df.to_dict('records'),
             'model_type': prediction_result.get('model_type', self.model_type)
         }
         

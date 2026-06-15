@@ -1,16 +1,14 @@
 from typing import Dict, Any
 from .base_agent import BaseAgent
-from .. import config as cfg
 from ..analysis.trend_prediction import TrendPredictor
 
 class TrendAgent(BaseAgent):
     def _get_system_prompt(self) -> str:
         return (
-            "你是一名具备【定性因果推断】能力的顶级趋势分析AI(TrendAgent)。"
-            "如果基础时序模型因为数据量少（如仅有单日数据）而给出低置信度的判断，"
-            "你必须立即放弃死板的曲线外推，改用因果逻辑进行深度推演："
-            "识别事件的【触发因子 -> 核心争议点 -> 传播裂变层 -> 可能的次生危机】，"
-            "并结合历史同类事件规律，给出前瞻性的走势推判。"
+            "你现在的角色是【蓝方-理性看多/对冲策略师(Blue Team / TrendAgent)】。\n"
+            "结合时序模型的预测方向和论坛中他人的意见，给出理性的趋势预测。\n"
+            "作为蓝方，你必须在【危机分析师(红方)】的悲观情绪中寻找破局点，寻找历史基线、事件反转点和长尾商业机会。\n"
+            "如果这是多轮对抗，请务必针对红方提出的恐慌进行坚决反驳！"
         )
 
     def run(self, input_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -37,13 +35,8 @@ class TrendAgent(BaseAgent):
             data_note = "数据量偏少，趋势仅供方向性参考，不建议作为唯一决策依据。"
 
         predictor = TrendPredictor()
-        base_periods = cfg.analysis_forecast_periods()
-        if total_count >= 200:
-            predictor.forecast_periods = base_periods
-        elif total_count >= 100:
-            predictor.forecast_periods = max(7, base_periods // 2)
-        else:
-            predictor.forecast_periods = max(5, base_periods // 4)
+        # 动态调整预测窗口：数据跨度越大，预测越远
+        predictor.forecast_periods = 30 if total_count >= 200 else 14 if total_count >= 100 else 7
         trend_results = predictor.analyze_market_sentiment_trend(analyzed_news)
         trend_summary = predictor.get_trend_summary(trend_results)
 
@@ -59,19 +52,19 @@ class TrendAgent(BaseAgent):
         forecast_window = predictor.forecast_periods
 
         llm_prompt = (
-            f"趋势分析任务：\n"
+            f"趋势分析任务（蓝方视角）：\n"
             f"【数据概况】共 {total_count} 条数据，时间跨度 {date_range}，"
             f"来自 {source_count} 个数据源。数据质量评级：{data_quality}。{data_note}\n"
             f"【模型结果】方向={direction}，置信度={confidence:.1%}，"
             f"预测窗口={forecast_window}天，预测点={predictions_count}个。\n"
         )
         if feedback:
-            llm_prompt += f"【主持人指引】{feedback}\n"
+            llm_prompt += f"【主持人指引及红方观点】{feedback}\n"
         llm_prompt += (
-            "请按以下结构输出你的科学趋势分析：\n"
-            "1. 因果推断综述（分析事件链条：触发点->当前态势->下一个可能的引爆点）\n"
-            "2. 关键发现（跳出数字表象，指出核心情绪驱动力与异常线索）\n"
-            "3. 后市沙盘推演（无论数据多少，基于事理逻辑，推演未来3-7天的2种可能走向及应对策略）"
+            "请按以下结构输出你的理性对冲分析：\n"
+            "1. 【蓝方立论】情绪噪音剥离（指出当前市场的过度恐慌或不合理之处）\n"
+            "2. 【反转信号】（寻找可能扭转局面的政策、补偿措施或历史基线数据支撑）\n"
+            "3. 【长尾机会】（别人恐惧我贪婪，推演反弹窗口与潜在的商业机会）"
         )
 
         insight = self.call_llm(llm_prompt)

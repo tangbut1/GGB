@@ -3,7 +3,7 @@
 基于 BettaFish 架构理念升级的多智能体协作系统。五个独立 Agent（Collect / Sentiment / Trend / Report / Host）通过中央论坛日志（forum.log）模拟圆桌辩论，LLM Host 定期总结并指出分析盲区，驱动各 Agent 在迭代中不断完善结论。
 
 ![Python Version](https://img.shields.io/badge/python-3.9%2B-blue)
-![Flask](https://img.shields.io/badge/framework-Flask-green)
+![Textual](https://img.shields.io/badge/TUI-Textual-blueviolet)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
 ---
@@ -11,7 +11,7 @@
 ## 架构流程
 
 ```
-用户输入关键词 → Flask 主控 → OrchestratorAgent 流水线调度
+用户/CLI 输入关键词 → TUI 工作台/事件循环 → OrchestratorAgent 调度
                                     │
     ┌───────────────────────────────┼───────────────────────────────┐
     ▼                               ▼                               ▼
@@ -47,9 +47,8 @@ CollectAgent                   SentimentAgent                    TrendAgent
 - **LLM 情感校正**：SnowNLP 对中文财经/政治文本存在正向偏置，SentimentAgent 通过 LLM 输出 JSON 校正情感分布，确保负面率真实反映舆情
 - **因果层级图谱**：EventExtractor 按因果层级（起因/发展/影响）构建有向事件关系图，支持触发/激化/引发/关联四种边类型
 - **模型异构**：config.yaml + .env 支持每个 Agent 配置不同的大模型（OpenAI 兼容接口），也可通过全局变量一键切换
-- **实时推流**：Flask-SocketIO 将论坛讨论实时推送前端面板
 - **交互式导出**：生成含 Chart.js + vis-network 的独立 HTML 报告
-- **追问功能**：AI 解读 Tab 内任意洞察卡片可展开详情并触发 SSE 流式追问
+- **本地工作台**：采用 Textual 驱动的终端用户界面（TUI），支持取消任务、查看历史、流式追问等高级操作，无需额外部署 Web 容器
 
 ---
 
@@ -109,22 +108,22 @@ MP_TREND_AGENT_BASE_URL=https://api.openai.com/v1  # 仅趋势预测换接口
 
 ### 4. 启动服务
 
-**macOS / Linux：**
+**启动 TUI 终端工作台（推荐）：**
 ```bash
-bash start.sh
+python3 console.py
 ```
+(支持交互式仪表盘、模式选择、实时事件流与任务历史管理)
 
-**Windows：**
-```cmd
-start.bat
-```
-
-**或直接用 Flask：**
+**或通过模块方式启动：**
 ```bash
-python3 -m flask run --host=0.0.0.0 --port=5050
+python -m src.cli.app
 ```
 
-浏览器打开 **http://localhost:5050** 即可使用。
+**Headless 模式（无 TUI，直接输出结果）：**
+```bash
+python -m src.cli.app -k "华为" -m news
+python -m src.cli.app --keyword "苹果" --mode social
+```
 
 ---
 
@@ -178,50 +177,17 @@ collect:
 | `MP_{AGENT}_MODEL` | 单 Agent 模型覆盖 |
 | `MP_{AGENT}_BASE_URL` | 单 Agent API 地址覆盖 |
 | `NEWSAPI_KEY` | 备用 NewsAPI 源（可选） |
-| `SECRET_KEY` | Flask Session 密钥 |
+
 
 ---
 
-## 前端界面
+## 工作台界面 (TUI)
 
-### 左侧面板
-- **关键词输入** + 数据源模式选择（社交媒体 / 新闻媒体）
-- **5 个 Agent 状态指示**：idle → active → done
-- **实时日志流**：forum.log 增量推送
+- **左侧面板**：控制台与任务历史（最近 50 条任务）。支持查看过往任务图谱与分析结果。
+- **右侧主交互区**：包含 **实时日志 (Pipeline/Agent 状态)**、**Agent 报告洞察**、**综合视图**、**因果链路概览**，并提供追问（Follow-up）功能。
+- **快捷键支持**：按 `Escape` 取消进行中的流水线任务，`Ctrl+C` 退出工作台。其他快捷键包括 `g`(图谱)、`r`(报告)、`q`(追问)、`h`(历史)、`t`(主题切换)。
 
-### 右侧结果面板 — 四个 Tab
-
-| Tab | 内容 |
-|-----|------|
-| **概览** | 舆情摘要、情感指标卡片（正面/负面/采集量/综合分）、关键词标签 |
-| **数据图表** | 情感分布饼图、30天情感走势折线图、多平台采集量柱状图、各平台情感堆叠图 |
-| **事件关系图** | 因果层级有向图谱（起因→发展→影响），支持主线/时间/平台/全景四种视图，节点详情面板 + 负面链路高亮 |
-| **AI 解读** | 核心判断卡（action_signal 徽章）、洞察卡片流（置信度进度条 + 反共识标签 + 展开详情）、数据盲区、多智能体论坛辩论时间线、追问功能 |
-
----
-
-## API 端点
-
-| 路由 | 方法 | 说明 |
-|------|------|------|
-| `/` | GET | 主界面 |
-| `/analyze` | POST | 提交分析任务（keyword + srcMode + 可选本地文件上传） |
-| `/stream/<task_id>` | GET | SSE 实时日志流 |
-| `/report/<task_id>` | GET | 下载 HTML 报告 |
-| `/status` | GET | 各 Agent 配置状态 |
-| `/history` | GET | 最近 50 条任务历史 |
-| `/followup` | POST | SSE 流式 AI 解读追问 |
-
-### `/analyze` 请求体
-
-```json
-{
-  "keyword": "华为",
-  "srcMode": "social",
-  "local_data": [],           // 可选：前端解析后的 JSON 数组
-  "local_data_raw_files": []  // 可选：base64 编码文件列表
-}
-```
+> *注：本项目已将核心分析逻辑（`OrchestratorAgent.stream_pipeline`）与 UI 完全解耦，全面拥抱 TUI 工作台和可持久化分析，原本的 Flask Web 端代码已在此版本移除。*
 
 ---
 
@@ -229,16 +195,15 @@ collect:
 
 ```
 MarketPulse/
-├── app.py                      # Flask 主控 + SocketIO + SSE
-├── main.py                     # Streamlit 独立 Agent 测试入口
 ├── requirements.txt
-├── start.sh / start.bat
 ├── .env.example
 ├── README.md
-├── templates/
-│   └── index.html              # 前端单页应用 (Chart.js + vis-network)
 ├── src/
 │   ├── config.yaml             # LLM 配置 + 采集量 + 分析参数
+│   ├── config.py               # 统一配置解析管理
+│   ├── cli/
+│   │   ├── app.py              # Textual TUI 工作台主入口
+│   │   └── events.py           # 流水线事件定义
 │   ├── agents/
 │   │   ├── base_agent.py       # Agent 基类 (call_llm + call_llm_with_system)
 │   │   ├── collect_agent.py    # 数据采集 (多源搜索 + 本地数据融合)
@@ -275,19 +240,15 @@ MarketPulse/
 
 ## 测试
 
-### 全流程测试
+```bash
+# 运行单元测试与集成测试
+pytest tests/
+```
 
-1. 启动服务后访问 `http://localhost:5050/status` 确认 5 个 Agent 均为 `configured: true`
-2. 选择数据源模式（社交媒体 / 新闻媒体），输入关键词，点击"开始分析"
-3. 观察左侧 Agent 状态依次变为 active → done，日志区实时滚动
-4. 任务完成后四个 Tab 依次检查：概览 / 数据图表 / 事件关系图 / AI 解读
-5. 在 AI 解读 Tab 展开任意洞察卡片，点击追问按钮验证流式追问
-6. 点击"下载 HTML 报告"验证离线报告
-
-### 独立 Agent 测试
+### 独立功能测试
 
 ```bash
-# 测试 CollectAgent 数据采集
+# 测试独立功能而不启动整个流水线
 python3 test_agents.py
 
 # 测试论坛 Monitor 与 HOST 触发机制
@@ -298,11 +259,12 @@ python3 test_forum.py
 
 ## 技术栈
 
-- **后端**：Python 3.9+ / Flask / Flask-SocketIO / PyYAML
-- **前端**：Vanilla JS / Chart.js 4.4 / vis-network / SSE
+- **运行时**：Python 3.9+ / PyYAML / Textual (TUI)
 - **NLP**：SnowNLP / TextBlob / jieba 分词
 - **时序预测**：Prophet
+- **报告导出**：HTML（内嵌 Chart.js + vis-network）；PDF / DOCX 为可选依赖（需额外安装 `reportlab` / `python-docx`）
 - **LLM**：OpenAI 兼容接口（DeepSeek / GPT-4o / Claude / Qwen 等均可）
+- **辅助入口**：Streamlit（`main.py`，仅用于独立 Agent 测试）
 
 ---
 

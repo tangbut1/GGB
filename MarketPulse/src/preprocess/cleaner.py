@@ -1,9 +1,5 @@
-import html
 import re
-try:
-    import jieba
-except ImportError:
-    jieba = None
+import jieba
 from typing import List, Dict, Any
 import json
 
@@ -13,8 +9,7 @@ class DataCleaner:
     
     def __init__(self):
         # 初始化jieba分词
-        if jieba:
-            jieba.initialize()
+        jieba.initialize()
         
         # 财经相关停用词
         self.stop_words = {
@@ -35,13 +30,6 @@ class DataCleaner:
         if not text or not isinstance(text, str):
             return ""
         
-        # 0. HTML 实体反转义（&nbsp; &amp; &lt; &gt; 等）
-        text = html.unescape(text)
-        # 0.5 二次兜底：处理可能的 double-escaped 实体 (&amp;nbsp; → &nbsp;)
-        if "&" in text:
-            text = html.unescape(text)
-        # 0.6 直接删除残留的 &nbsp; / &amp; 等HTML实体原始字符串
-        text = re.sub(r'&[a-zA-Z]+;', ' ', text)
         # 1. 去除HTML标签
         text = re.sub(r'<[^>]+>', '', text)
         
@@ -55,12 +43,8 @@ class DataCleaner:
         
         # 4. 对于中文内容，去除停用词
         if re.search(r'[\u4e00-\u9fa5]', text):  # 如果包含中文
-            words = jieba.lcut(text) if jieba else re.split(r'\s+', text)
-            _html_junk = frozenset(["nbsp","nbs","amp","quot","lt","gt","apos"])
-            cleaned_words = [
-                w for w in words
-                if w not in self.stop_words and len(w) > 1 and w.lower() not in _html_junk
-            ]
+            words = jieba.lcut(text)
+            cleaned_words = [word for word in words if word not in self.stop_words and len(word) > 1]
             return ' '.join(cleaned_words).strip()
         else:
             # 对于纯英文内容，只做基本清理
@@ -110,12 +94,7 @@ class DataCleaner:
                 'category': news.get('category', ''),
                 'original_title': original_title,
                 'original_summary': original_summary,
-                'original_content': original_content,
-                'domain': news.get('domain', ''),
-                'content_hash': news.get('content_hash', ''),
-                'source_refs': news.get('source_refs', []),
-                'source_ref': news.get('source_ref', {}),
-                'collected_at': news.get('collected_at', ''),
+                'original_content': original_content
             }
             
             # 保留有标题的新闻（降低过滤条件）
@@ -138,7 +117,7 @@ class DataCleaner:
         if not text:
             return []
         
-        words = jieba.lcut(text) if jieba else re.split(r'\s+', text)
+        words = jieba.lcut(text)
         word_freq = {}
         
         for word in words:

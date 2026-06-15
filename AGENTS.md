@@ -4,10 +4,10 @@ This file provides guidance to Codex (Codex.ai/code) when working with code in t
 
 ## Entry Points
 
-- **`MarketPulse/app.py`** — Flask + SocketIO web app (primary). Start with `bash start.sh` or `python3 -m flask run --host=0.0.0.0 --port=5050`. Serves SPA at `/`, SSE at `/stream/<task_id>`, API at `/analyze`, `/followup`, `/status`, `/history`.
+- **`MarketPulse/src/cli/app.py`** — Textual TUI 工作台主入口 (primary)。Start with `python3 console.py` or `python -m src.cli.app`。通过事件流（`PipelineEvent`, `ReportEvent`等）解耦 UI 与内核，支持交互式仪表盘、流式日志。
 - **`MarketPulse/main.py`** — Streamlit standalone dashboard (secondary, for local Agent testing). `streamlit run main.py`.
 
-These two entry points are **completely independent**. `main.py` does not use the multi-agent forum architecture — it calls `src/` modules directly via the older pipeline (NewsCollector → DataCleaner → SentimentAnalyzer → TrendPredictor). `app.py` is the real system.
+These two entry points are **completely independent**. `main.py` does not use the multi-agent forum architecture — it calls `src/` modules directly via the older pipeline. `src/cli/app.py` is the real system (replaces the older Flask `app.py`).
 
 ## Commands
 
@@ -16,8 +16,12 @@ These two entry points are **completely independent**. `main.py` does not use th
 pip install -r requirements.txt
 cp .env.example .env   # then edit with real API keys
 
-# Run web app
-bash start.sh
+# Run TUI workspace
+python3 console.py
+# or: python -m src.cli.app
+
+# Run headless (no TUI)
+python -m src.cli.app -k "华为" -m news
 
 # Run Streamlit dashboard
 streamlit run main.py
@@ -50,7 +54,7 @@ Collect → Sentiment → Trend → [wait Monitor triggers Host] → optional Ro
 ```
 
 - Trend failure is **non-fatal** — injects degraded fallback summary so downstream stages still get data.
-- If no real search results, CollectAgent injects **mock data** to keep the pipeline running.
+- If no real search results, CollectAgent **fast-fails** with a clear error (no mock data injection).
 
 ### Forum Mechanism
 
@@ -68,14 +72,14 @@ MP_{AGENT}_MODEL / MP_{AGENT}_BASE_URL   (per-agent, highest)
 
 Each of the 5 agents + forum_host gets its own API key via `MP_{COLLECT|SENTIMENT|TREND|REPORT|FORUM_HOST}_AGENT_API_KEY`.
 
-### Frontend
+### Frontend (TUI)
 
-Single HTML file (`templates/index.html`). Left panel: keyword input, mode selector (social/news), agent status indicators. Right panel: 4 tabs — Overview, Charts (Chart.js), Event Graph (vis-network directed causal graph), AI Insights (SSE streaming follow-up). SocketIO pushes agent status updates and log lines in real time.
+Textual based terminal application (`src/cli/app.py`). Left panel: console log and task history list. Right panel: interactive tabs — Pipeline/Forum Log, Agent Report (Insights), Graph View (textual causal chains). Async generators push agent status updates and log lines in real time through events (`src/cli/events.py`).
 
 ## Key Patterns
 
-- **All LLM calls** go through `BaseAgent._call_llm_inner()` → OpenAI-compatible `/chat/completions` endpoint, 60s timeout, no retry.
-- **JSON extraction from LLM responses** uses 4-level fallback: direct parse → strip code fences → find `{...}` slice → regex match. The ReportAgent adds a 5th level: Markdown structure parsing when JSON is entirely absent.
+- **All LLM calls** go through `BaseAgent._call_llm_inner()` → shared `LLMClient` (connection-pooled `requests.Session`) → OpenAI-compatible `/chat/completions` endpoint. Per-agent timeout and retry count are configured in `config.yaml` (`timeout` / `max_retries` fields); defaults are resolved via `src/config.py`.
+- **JSON extraction from LLM responses** uses 5-level fallback: strip code fences → direct parse → find `{...}` slice → regex match → Markdown structure parsing.
 - **Sentiment correction**: SnowNLP systematically under-reports negative sentiment for Chinese financial/political text. SentimentAgent sends SnowNLP results + samples to LLM for correction, then applies label redistribution sorted by score.
-- **`src/config.yaml`** uses `${ENV_VAR}` placeholders expanded at startup by `_expand_env()` in `app.py`.
+- **`src/config.yaml`** uses `${ENV_VAR}` placeholders expanded at startup by `src/config.py`.
 - The `data/` directory caches search results; `results/reports/` holds generated HTML reports.

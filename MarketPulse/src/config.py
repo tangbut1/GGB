@@ -206,3 +206,71 @@ def knowledge_db_path() -> str:
 
 def results_dir() -> str:
     return _cfg().get("data", {}).get("results_dir", "results")
+
+import logging
+import sys
+
+def setup_logger(name: str = "MarketPulse") -> logging.Logger:
+    """Set up and return a standard unified logger for the system."""
+    logger = logging.getLogger(name)
+    if not logger.handlers:
+        logger.setLevel(logging.INFO)
+        formatter = logging.Formatter('%(asctime)s | %(levelname)s | %(name)s:%(funcName)s:%(lineno)d - %(message)s')
+        
+        console_handler = logging.StreamHandler(sys.stdout)
+        console_handler.setFormatter(formatter)
+        logger.addHandler(console_handler)
+        
+        # Optional: Add file handler
+        log_dir = Path("logs")
+        log_dir.mkdir(exist_ok=True)
+        file_handler = logging.FileHandler(log_dir / "system.log", encoding="utf-8")
+        file_handler.setFormatter(formatter)
+        logger.addHandler(file_handler)
+        
+    return logger
+
+logger = setup_logger()
+
+class SimpleLoguruWrapper:
+    def __init__(self, name="MarketPulse"):
+        self.logger = logging.getLogger(name)
+        if not self.logger.handlers:
+            self.logger.setLevel(logging.INFO)
+            formatter = logging.Formatter('%(asctime)s | %(levelname)s | %(name)s - %(message)s')
+            
+            console_handler = logging.StreamHandler(sys.stdout)
+            console_handler.setFormatter(formatter)
+            self.logger.addHandler(console_handler)
+            
+            log_dir = Path("logs")
+            log_dir.mkdir(exist_ok=True)
+            file_handler = logging.FileHandler(log_dir / "system.log", encoding="utf-8")
+            file_handler.setFormatter(formatter)
+            self.logger.addHandler(file_handler)
+
+    def _format(self, msg, *args):
+        if args:
+            if "{}" in msg:
+                # Naive replacement of {} with %s
+                msg = msg.replace("{}", "%s")
+            return msg % args
+        return msg
+
+    def info(self, msg, *args):
+        self.logger.info(self._format(msg, *args))
+
+    def debug(self, msg, *args):
+        self.logger.debug(self._format(msg, *args))
+
+    def warning(self, msg, *args):
+        self.logger.warning(self._format(msg, *args))
+
+    def error(self, msg, *args):
+        self.logger.error(self._format(msg, *args))
+
+    def success(self, msg, *args):
+        # logging has no success, use info
+        self.logger.info(self._format("[SUCCESS] " + msg, *args))
+
+logger = SimpleLoguruWrapper()

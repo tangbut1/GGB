@@ -42,6 +42,15 @@ class TaskStore:
             entry["error"] = error
         self._write(task_id, entry)
 
+    def update_stats(self, task_id: str, updates: dict) -> None:
+        """Update arbitrary statistics for the task (e.g. durations, counts)."""
+        with self._lock:
+            entry = self._read(task_id) or {}
+            stats = entry.setdefault("stats", {})
+            stats.update(updates)
+            entry["updated_at"] = _now()
+            self._write(task_id, entry)
+
     # ── read ─────────────────────────────────────────────────────────────────
 
     def get(self, task_id: str) -> Dict[str, Any] | None:
@@ -83,8 +92,10 @@ class TaskStore:
 
     def _write(self, task_id: str, entry: Dict[str, Any]) -> None:
         path = self._path(task_id)
+        tmp_path = path.with_suffix(".json.tmp")
         with self._lock:
-            path.write_text(json.dumps(entry, ensure_ascii=False, indent=2), encoding="utf-8")
+            tmp_path.write_text(json.dumps(entry, ensure_ascii=False, indent=2), encoding="utf-8")
+            os.replace(tmp_path, path)
 
 
 def _now() -> str:

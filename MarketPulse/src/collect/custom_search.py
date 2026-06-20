@@ -247,6 +247,9 @@ class CustomSearchCollector:
         from xml.etree import ElementTree
 
         results: List[Dict[str, Any]] = []
+        if self._google_banned:
+            return results
+            
         encoded_q = urllib.parse.quote(keyword)
 
         # 尝试中英文两种区域配置
@@ -269,6 +272,9 @@ class CustomSearchCollector:
                     resp = self.session.get(rss_url, timeout=self.search_timeout)
                     if resp.status_code != 200:
                         logger.warning("Google News RSS 返回 {}: {}", resp.status_code, hl)
+                        if resp.status_code in (403, 429, 503):
+                            self._google_banned = True
+                            return results
                         if attempt < 3:
                             time.sleep(1.5 ** attempt)
                         continue
@@ -352,7 +358,7 @@ class CustomSearchCollector:
     # ------------------------------------------------------------------
     def _search_generic(self, keyword: str, remaining: int) -> List[Dict[str, Any]]:
         """Bing News 网页抓取回退方案，多选择器兼容。"""
-        if remaining <= 0:
+        if remaining <= 0 or self._bing_banned:
             return []
 
         logger.info("尝试通过 Bing News HTML 抓取补充搜索结果...")
@@ -363,7 +369,12 @@ class CustomSearchCollector:
         for attempt in range(1, 4):
             try:
                 resp = self.session.get(url, params=params, timeout=self.search_timeout)
-                resp.raise_for_status()
+                if resp.status_code != 200:
+                    logger.warning("Bing News 返回 {}: {}", resp.status_code, attempt)
+                    if resp.status_code in (403, 429, 503):
+                        self._bing_banned = True
+                        return items
+                    resp.raise_for_status()
                 soup = BeautifulSoup(resp.text, "html.parser")
 
                 # 多套选择器，兼容 Bing 不同的页面结构

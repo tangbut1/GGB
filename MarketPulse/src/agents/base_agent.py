@@ -74,6 +74,11 @@ class BaseAgent(ABC):
             response = requests.post(endpoint, headers=headers, json=payload, timeout=60)
             response.raise_for_status()
             data = response.json()
+            
+            # Report usage metrics if log manager is available
+            if self.forum and "usage" in data:
+                self.forum.add_usage(data["usage"])
+                
             if "choices" in data and len(data["choices"]) > 0:
                 return data["choices"][0]["message"]["content"].strip()
             return f"Error: Unexpected response format: {data}"

@@ -13,7 +13,6 @@ newspaper3k>=0.2.8
 
 # NLP / 情感分析
 jieba>=0.42.1
-snownlp>=0.12.3
 textblob>=0.17.1
 nltk>=3.9
 

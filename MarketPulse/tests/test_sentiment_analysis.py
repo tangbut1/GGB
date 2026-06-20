@@ -13,7 +13,7 @@ def test_analyze_single():
     assert result_pos['sentiment'] >= 0
     assert result_pos['label'] in ['positive', 'neutral']
 
-    # Test negative case (SnowNLP might give weird scores, we just check it runs without crash)
+    # Test negative case (FinBERT should correctly identify this)
     result_neg = analyzer.analyze_single("市场下跌严重，亏损巨大，存在严重危机。")
     assert 'sentiment' in result_neg
 

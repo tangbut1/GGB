@@ -2,7 +2,7 @@ import json
 import numpy as np
 from typing import List, Dict, Any, Tuple
 from pathlib import Path
-import snownlp
+from transformers import pipeline
 from textblob import TextBlob
 import jieba
 from collections import Counter
@@ -24,6 +24,13 @@ class SentimentAnalyzer:
             '下跌', '亏损', '利空', '跌破', '创新低', '跌幅', '损失', '风险', '危机', '衰退',
             '消极', '悲观', '看空', '卖出', '减持', '下跌', '亏损', '利空', '跌破', '创新低'
         }
+        
+        # 初始化 FinBERT 模型
+        self.finbert_pipeline = None
+        try:
+            self.finbert_pipeline = pipeline("sentiment-analysis", model="yiyanghkust/finbert-tone-chinese")
+        except Exception as e:
+            print(f"Failed to load FinBERT model: {e}")
     
     def analyze_single(self, text: str) -> Dict[str, float]:
         """
@@ -41,14 +48,14 @@ class SentimentAnalyzer:
         # 1. 基于词典的情绪分析
         dict_score = self._dict_based_sentiment(text)
         
-        # 2. SnowNLP情绪分析
-        snownlp_score = self._snownlp_sentiment(text)
+        # 2. FinBERT情绪分析
+        finbert_score = self._finbert_sentiment(text)
         
         # 3. TextBlob情绪分析（英文）
         textblob_score = self._textblob_sentiment(text)
         
         # 4. 融合多个模型的结果
-        scores = [dict_score, snownlp_score, textblob_score]
+        scores = [dict_score, finbert_score, textblob_score]
         valid_scores = [s for s in scores if s is not None]
         
         if not valid_scores:
@@ -85,11 +92,24 @@ class SentimentAnalyzer:
         score = (positive_count - negative_count) / total_words
         return max(-1.0, min(1.0, score))
     
-    def _snownlp_sentiment(self, text: str) -> float:
-        """SnowNLP情绪分析"""
+    def _finbert_sentiment(self, text: str) -> float:
+        """FinBERT情绪分析"""
+        if not self.finbert_pipeline:
+            return None
         try:
-            return snownlp.SnowNLP(text).sentiments
-        except:
+            # BERT limits sequence length to 512 tokens.
+            # We slice the string loosely to prevent crash.
+            result = self.finbert_pipeline(text[:500])[0]
+            label = result['label']
+            score = result['score']
+            
+            if label == 'Positive':
+                return float(score)
+            elif label == 'Negative':
+                return -float(score)
+            else:
+                return 0.0
+        except Exception:
             return None
     
     def _textblob_sentiment(self, text: str) -> float:

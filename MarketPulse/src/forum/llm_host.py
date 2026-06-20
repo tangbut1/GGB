@@ -4,7 +4,7 @@ class LLMHost:
     def __init__(self, config: dict):
         self.config = config
         
-    def generate_guidance(self, forum_context: str) -> str:
+    def generate_guidance(self, forum_messages: list) -> str:
         if not self.config:
             return ""
             
@@ -38,12 +38,26 @@ class LLMHost:
             "Content-Type": "application/json"
         }
         
+        # 组装结构化上下文
+        messages = [{"role": "system", "content": system_prompt}]
+        for msg in forum_messages:
+            agent = msg.get("agent", "Unknown")
+            content = msg.get("content", "")
+            if agent == "SYSTEM" or agent == "HOST":
+                continue  # 跳过系统日志和自己之前的发言（或者也可保留，视策略而定）
+            messages.append({
+                "role": "user",
+                "name": agent,
+                "content": content
+            })
+            
+        # 如果没有前置消息，兜底提示
+        if len(messages) == 1:
+            messages.append({"role": "user", "content": "暂无红蓝双方的发言记录。"})
+        
         payload = {
             "model": model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": f"以下是最近的讨论记录：\n{forum_context}"}
-            ],
+            "messages": messages,
             "temperature": 0.7
         }
 
@@ -51,8 +65,10 @@ class LLMHost:
             response = requests.post(endpoint, headers=headers, json=payload, timeout=60)
             response.raise_for_status()
             data = response.json()
+            
+            usage = data.get("usage", {})
             if "choices" in data and len(data["choices"]) > 0:
-                return data["choices"][0]["message"]["content"].strip()
-            return "【HOST错误】：API返回异常"
+                return data["choices"][0]["message"]["content"].strip(), usage
+            return "【HOST错误】：API返回异常", usage
         except Exception as e:
-            return f"【HOST错误】：{str(e)}"
+            return f"【HOST错误】：{str(e)}", {}

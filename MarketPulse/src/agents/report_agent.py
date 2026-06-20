@@ -18,7 +18,7 @@ class ReportAgent(BaseAgent):
         trend_results = input_data.get("trend_results", {})
         keyword = input_data.get("keyword", "未知关键词")
         task_id = input_data.get("task_id", "default")
-        forum_log = input_data.get("forum_log", [])
+        forum_messages = input_data.get("forum_messages", [])
 
         report_data = {
             "keyword": keyword,
@@ -30,7 +30,7 @@ class ReportAgent(BaseAgent):
         }
 
         # 论坛辩论过程提取
-        forum_debate = self._extract_forum_debate(forum_log)
+        forum_debate = self._extract_forum_debate(forum_messages)
         report_data["forum_debate"] = forum_debate
 
         # 简单结语（概览 Tab 用）
@@ -71,6 +71,10 @@ class ReportAgent(BaseAgent):
         debate_cards = self._generate_debate_cards(forum_log, sentiment_summary, trend_summary)
         report_data["debate_cards"] = debate_cards
         ai_insights["debate_cards"] = debate_cards
+
+        # 新增：生成最终报告
+        final_report = self._generate_final_report(keyword, forum_messages)
+        report_data["final_report"] = final_report
 
         return {
             "status": "success",
@@ -169,39 +173,13 @@ class ReportAgent(BaseAgent):
         return debate_entries
 
     @staticmethod
-    def _generate_debate_cards(forum_log: list, sentiment_summary: dict, trend_summary: dict) -> list:
-        """从 forum.log 生成结构化辩论卡片，过滤过程日志，按 agent+round 合并，heuristic 生成 summary + highlights"""
-        if not forum_log:
+    def _generate_debate_cards(forum_messages: list, sentiment_summary: dict, trend_summary: dict) -> list:
+        """从 forum_messages 生成结构化辩论卡片"""
+        if not forum_messages:
             return []
 
-        agent_pattern = re.compile(
-            r'\[[\d\-:\s]+\]\s*\[(HOST|CollectAgent|SentimentAgent|TrendAgent|ReportAgent)\]\s*\[Round\s*(\d+)\]\s*(.+)'
-        )
-
-        # ── Step A: 解析（状态机，多行 agent 内容追加到当前 entry）──
-        entries = []
-        current_entry = None
-        for line in forum_log:
-            line = line.strip()
-            if not line or "--- Forum Log" in line:
-                continue
-            m = agent_pattern.match(line)
-            if m:
-                if current_entry and len(current_entry["content"]) >= 5:
-                    entries.append(current_entry)
-                agent, round_num, content = m.group(1), int(m.group(2)), m.group(3).strip()
-                current_entry = {"agent": agent, "round": round_num, "content": content}
-            elif re.match(r'^\[[\d\-:\s]+\]\s*\[.*?\]', line):
-                # 这是一个新的日志行（例如 [SYSTEM], [Monitor]），但不属于目标 Agent，我们应该结束当前 entry，避免将这些日志误认为是上一个 agent 的续行
-                if current_entry and len(current_entry["content"]) >= 5:
-                    entries.append(current_entry)
-                current_entry = None
-            elif current_entry:
-                # 续行：追加到当前 entry（处理 agent 多行输出）
-                current_entry["content"] += "\n" + line
-        # 最后一个 entry
-        if current_entry and len(current_entry["content"]) >= 5:
-            entries.append(current_entry)
+        # 已经天然是 dict，无需正则合并多行
+        entries = forum_messages
 
         # ── Step B: 过滤过程日志（HOST 不过滤）──
         process_kw = ["补充词", "新数据", "采集完成", "开始采集", "搜索完成",
@@ -673,3 +651,79 @@ JSON 格式（严格遵循，不要修改 key 名）：
             return keywords
         except Exception:
             return []
+
+    def _generate_final_report(self, keyword: str, forum_log: list) -> dict:
+        """综合红方、蓝方、主持人发言生成最终报告"""
+        red_text = []
+        blue_text = []
+        host_text = []
+        
+        agent_pattern = re.compile(
+            r'\[[\d\-:\s]+\]\s*\[(HOST|CollectAgent|SentimentAgent|TrendAgent|ReportAgent)\]\s*\[Round\s*(\d+)\]\s*(.+)'
+        )
+        
+        for line in forum_log:
+            m = agent_pattern.match(line.strip())
+            if m:
+                agent, content = m.group(1), m.group(3)
+                if agent == "SentimentAgent":
+                    red_text.append(content)
+                elif agent == "TrendAgent":
+                    blue_text.append(content)
+                elif agent == "HOST":
+                    host_text.append(content)
+
+        red_combined = "\n".join(red_text)
+        blue_combined = "\n".join(blue_text)
+        host_combined = "\n".join(host_text)
+
+        sys_prompt = (
+            "你是一个高级市场分析师。你需要总结前面的辩论，输出一份最终的结构化 JSON 报告。\n"
+            "必须输出纯 JSON，不包含任何 Markdown 代码块标签！"
+        )
+        user_prompt = f"""
+分析主题：{keyword}
+
+红方（危机分析师）核心观点：
+{red_combined[:1500]}
+
+蓝方（理性分析师）核心观点：
+{blue_combined[:1500]}
+
+主持人（法官）裁定：
+{host_combined[:1500]}
+
+请输出如下 JSON 格式的总结报告：
+{{
+    "title": "报告主标题，简洁有力",
+    "overview": "话题整体概述（约100-150字）",
+    "red_summary": "红方核心观点摘要（约50-80字）",
+    "blue_summary": "蓝方核心观点摘要（约50-80字）",
+    "host_summary": "主持人裁定摘要（约50-80字）",
+    "key_risks": ["风险1", "风险2"],
+    "key_opportunities": ["机会1", "机会2"],
+    "conclusion": "最终分析结论（约100字）",
+    "recommendations": ["行动建议1", "行动建议2"]
+}}
+"""
+        response = self._call_llm_inner(sys_prompt, user_prompt)
+        
+        try:
+            clean_resp = response.replace("```json", "").replace("```", "").strip()
+            first_brace = clean_resp.find("{")
+            last_brace = clean_resp.rfind("}")
+            if first_brace != -1 and last_brace != -1:
+                clean_resp = clean_resp[first_brace:last_brace+1]
+            return json.loads(clean_resp)
+        except Exception:
+            return {
+                "title": f"关于 {keyword} 的综合报告",
+                "overview": "生成报告解析失败，请参考辩论面板内容。",
+                "red_summary": "无",
+                "blue_summary": "无",
+                "host_summary": "无",
+                "key_risks": [],
+                "key_opportunities": [],
+                "conclusion": "解析失败。",
+                "recommendations": []
+            }

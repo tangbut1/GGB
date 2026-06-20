@@ -16,7 +16,7 @@ from src.agents.orchestrator import OrchestratorAgent
 app = Flask(__name__)
 CORS(app)
 app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'marketpulse-secret-key-change-me')
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading')
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='threading', max_http_buffer_size=10000000)
 
 
 def _load_dotenv():
@@ -239,6 +239,8 @@ def analyze():
         monitor.start()
         try:
             result = orchestrator.run_pipeline()
+            if result.get("status") == "error":
+                raise Exception(result.get("message", "管道执行失败"))
             tasks[task_id]["status"] = "completed"
             tasks[task_id]["result"] = result
 
@@ -270,6 +272,7 @@ def analyze():
                 "ai_insights": report_data.get("ai_insights", None),
                 "collect_meta": report_data.get("collect_meta", {}),
                 "forum_debate": report_data.get("forum_debate", []),
+                "final_report": report_data.get("final_report", None),
                 # 标记数据来源
                 "from_backend": True
             }
@@ -442,7 +445,23 @@ def api_status():
 
 @app.route('/history')
 def history():
-    return jsonify(task_history[-50:])
+    # 返回精简列表
+    simplified = []
+    for t in task_history[-50:]:
+        simplified.append({
+            "task_id": t.get("task_id"),
+            "keyword": t.get("keyword"),
+            "time": t.get("time"),
+            "status": t.get("status")
+        })
+    return jsonify(simplified)
+
+@app.route('/history/<task_id>')
+def history_detail(task_id):
+    for t in task_history:
+        if t.get("task_id") == task_id:
+            return jsonify(t)
+    return jsonify({"error": "Not found"}), 404
 
 
 @socketio.on('join')
@@ -453,25 +472,35 @@ def on_join(data):
 
     # 发送已有日志
     if task_id in tasks:
-        lines = tasks[task_id]["forum_manager"].read_all_lines()
-        for line in lines:
-            socketio.emit('log_line', {'line': line}, room=task_id)
+        msgs = tasks[task_id]["forum_manager"].get_all_messages()
+        for msg in msgs:
+            socketio.emit('debate_turn', msg, room=task_id)
 
 
 def background_log_emitter():
-    """后台线程：每秒轮询各任务日志并广播增量"""
+    """后台线程：每秒轮询各任务的结构化消息并广播增量，同时广播使用量统计"""
     last_processed = {}
+    last_usage = {}
     while True:
         time.sleep(1)
         for task_id, task_info in list(tasks.items()):
             if task_info["status"] == "running":
                 try:
-                    lines = task_info["forum_manager"].read_all_lines()
+                    manager = task_info["forum_manager"]
+                    msgs = manager.get_all_messages()
                     idx = last_processed.get(task_id, 0)
-                    if len(lines) > idx:
-                        for line in lines[idx:]:
-                            socketio.emit('log_line', {'line': line}, room=task_id)
-                        last_processed[task_id] = len(lines)
+                    if len(msgs) > idx:
+                        for msg in msgs[idx:]:
+                            socketio.emit('debate_turn', msg, room=task_id)
+                        last_processed[task_id] = len(msgs)
+                        
+                    # Emit usage stats if changed
+                    current_usage = manager.get_usage_stats()
+                    prev_usage = last_usage.get(task_id, {})
+                    if current_usage != prev_usage:
+                        socketio.emit('api_usage_update', current_usage, room=task_id)
+                        last_usage[task_id] = current_usage
+                        
                 except Exception:
                     pass
 

@@ -16,7 +16,7 @@
     ┌───────────────────────────────┼───────────────────────────────┐
     ▼                               ▼                               ▼
 CollectAgent                   SentimentAgent                    TrendAgent
-数据采集与清洗                  SnowNLP + LLM 校正情感分析        Prophet 时序预测
+数据采集与清洗                  FinBERT + LLM 校正情感分析        Prophet 时序预测
     │                               │                               │
     └───────────┬───────────────────┴───────────┬───────────────────┘
                 │                               │
@@ -44,7 +44,7 @@ CollectAgent                   SentimentAgent                    TrendAgent
 
 - **5 Agent 解耦**：采集、情感、趋势、报告、主持人各自独立 LLM 配置
 - **论坛辩论机制**：Agent 把关键发现写入 forum.log，Monitor 守护线程在达到阈值（Agent 消息 ≥ 5 条或 15 秒无新消息）时触发 Host 介入
-- **LLM 情感校正**：SnowNLP 对中文财经/政治文本存在正向偏置，SentimentAgent 通过 LLM 输出 JSON 校正情感分布，确保负面率真实反映舆情
+- **LLM 情感校正**：FinBERT 基础分类后，SentimentAgent 通过 LLM 输出 JSON 进一步校正情感分布，确保负面率真实反映舆情
 - **因果层级图谱**：EventExtractor 按因果层级（起因/发展/影响）构建有向事件关系图，支持触发/激化/引发/关联四种边类型
 - **模型异构**：config.yaml + .env 支持每个 Agent 配置不同的大模型（OpenAI 兼容接口），也可通过全局变量一键切换
 - **交互式导出**：生成含 Chart.js + vis-network 的独立 HTML 报告
@@ -207,14 +207,14 @@ MarketPulse/
 │   ├── agents/
 │   │   ├── base_agent.py       # Agent 基类 (call_llm + call_llm_with_system)
 │   │   ├── collect_agent.py    # 数据采集 (多源搜索 + 本地数据融合)
-│   │   ├── sentiment_agent.py  # 情感分析 (SnowNLP + LLM 校正)
+│   │   ├── sentiment_agent.py  # 情感分析 (FinBERT + LLM 校正)
 │   │   ├── trend_agent.py      # 趋势预测 (Prophet + 数据质量评级)
 │   │   ├── report_agent.py     # 报告生成 + AI 解读 + 论坛辩论提取
 │   │   └── orchestrator.py     # 流水线调度 (5 阶段 + 2 轮迭代)
 │   ├── collect/
 │   │   └── custom_search.py    # 多源搜索 (Google RSS → DDG → Bing → NewsAPI)
 │   ├── analysis/
-│   │   ├── sentiment_analysis.py  # SnowNLP + TextBlob + 词典融合打分
+│   │   ├── sentiment_analysis.py  # FinBERT + TextBlob + 词典融合打分
 │   │   ├── trend_prediction.py    # Prophet 时序预测
 │   │   └── event_extractor.py     # jieba 关键词提取 + 因果层级图谱
 │   ├── forum/
@@ -260,7 +260,7 @@ python3 test_forum.py
 ## 技术栈
 
 - **运行时**：Python 3.9+ / PyYAML / Textual (TUI)
-- **NLP**：SnowNLP / TextBlob / jieba 分词
+- **NLP**：FinBERT / TextBlob / jieba 分词
 - **时序预测**：Prophet
 - **报告导出**：HTML（内嵌 Chart.js + vis-network）；PDF / DOCX 为可选依赖（需额外安装 `reportlab` / `python-docx`）
 - **LLM**：OpenAI 兼容接口（DeepSeek / GPT-4o / Claude / Qwen 等均可）

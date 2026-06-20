@@ -131,6 +131,9 @@ class TrendPredictor:
                 future = self.model.make_future_dataframe(periods=periods)
                 forecast = self.model.predict(future)
                 prediction_records = forecast[['ds', 'yhat', 'yhat_lower', 'yhat_upper']].tail(periods).to_dict('records')
+                for r in prediction_records:
+                    if hasattr(r['ds'], 'strftime'):
+                        r['ds'] = r['ds'].strftime('%Y-%m-%d')
             else:
                 forecast, prediction_records = self._forecast_with_baseline(periods)
             
@@ -285,6 +288,11 @@ class TrendPredictor:
         if 'error' in prediction_result:
             return prediction_result
         
+        historical_records = df.to_dict('records')
+        for r in historical_records:
+            if hasattr(r['ds'], 'strftime'):
+                r['ds'] = r['ds'].strftime('%Y-%m-%d')
+                
         # 生成分析摘要
         analysis_summary = {
             'data_points': len(df),
@@ -292,7 +300,7 @@ class TrendPredictor:
             'trend_direction': prediction_result['trend_direction'],
             'confidence': prediction_result['confidence'],
             'predictions': prediction_result['predictions'],
-            'historical_data': df.to_dict('records'),
+            'historical_data': historical_records,
             'model_type': prediction_result.get('model_type', self.model_type)
         }
         

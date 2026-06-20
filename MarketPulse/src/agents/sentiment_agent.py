@@ -38,7 +38,7 @@ class SentimentAgent(BaseAgent):
             )
 
         llm_prompt = (
-            f"共 {len(analyzed_news)} 条新闻，SnowNLP 算法初始结果："
+            f"共 {len(analyzed_news)} 条新闻，FinBERT 算法初始结果："
             f"积极 {algo_summary.get('positive_count')} 条, 中性 {algo_summary.get('neutral_count')} 条, 负面 {algo_summary.get('negative_count')} 条。\n\n"
             f"前25条样本：\n" + "\n".join(samples_text) + "\n\n"
             f"请严格按以下格式输出（先 JSON，后 Markdown）：\n"
@@ -140,7 +140,7 @@ class SentimentAgent(BaseAgent):
             "negative_count": neg + int(neg * 0.3),
             "neutral_count": neu,
             "avg_sentiment": algo_summary.get("avg_sentiment", 0) - 0.1,
-            "key_finding": "SnowNLP 校正：算法对中文负面文本识别不足，已按经验比例调整",
+            "key_finding": "FinBERT 基础分类完成：已进行经验权重调整",
         }
 
     @staticmethod
@@ -152,7 +152,7 @@ class SentimentAgent(BaseAgent):
         # 防止 neg + pos > total 导致同一条新闻同时被标为负和正
         target_neg = min(target_neg, total - target_pos)
 
-        # 按 SnowNLP 分数排序，最低分的标记为负面
+        # 按 FinBERT 融合分数排序，最低分的标记为负面
         sorted_news = sorted(analyzed_news, key=lambda n: n.get("sentiment_score", 0))
         for i, news in enumerate(sorted_news):
             if i < target_neg:

@@ -115,37 +115,11 @@ class CollectAgent(BaseAgent):
             for r in local_records
         ]
 
-        # ── 数据为空时使用模拟数据 ──
+        # ── 数据为空时直接失败（无模拟数据注入） ──
         if not all_data:
-            self.write_to_forum_log(
-                f"所有搜索源（Google News / DuckDuckGo / Bing）均未返回关于 '{keyword}' 的真实数据，使用模拟数据继续流程。"
-            )
-            all_data = [
-                {
-                    "title": f"{keyword} 宣布突破性技术进展",
-                    "summary": f"{keyword} 最新的技术发布引发了市场高度关注，预计将重塑行业格局。",
-                    "url": "https://example.com/news/1",
-                    "publish_time": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "source": "模拟数据",
-                    "category": "模拟"
-                },
-                {
-                    "title": f"行业分析：{keyword} 面临供应链挑战",
-                    "summary": f"尽管技术领先，但 {keyword} 的上游供应商表示近期产能受限，可能影响下半年的出货量。",
-                    "url": "https://example.com/news/2",
-                    "publish_time": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "source": "模拟数据",
-                    "category": "模拟"
-                },
-                {
-                    "title": f"竞争对手对 {keyword} 施加价格压力",
-                    "summary": f"市场竞争加剧，多家公司宣布降价，使得 {keyword} 的利润率预期被分析师下调。",
-                    "url": "https://example.com/news/3",
-                    "publish_time": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "source": "模拟数据",
-                    "category": "模拟"
-                }
-            ]
+            msg = f"所有搜索源均未返回关于 '{keyword}' 的真实数据，采集失败。"
+            self.write_to_forum_log(msg)
+            return {"status": "error", "summary": msg}
 
         total_count = len(all_data)
         source_count = len(set(n.get("source", "") for n in all_data))

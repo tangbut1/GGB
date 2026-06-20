@@ -2,6 +2,62 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ── Theme CSS Variables ───────────────────────────────────────── */
+[data-theme="dark"] {
+  --color-app: #0F1115;
+  --color-sidebar: #13161B;
+  --color-panel: #171A20;
+  --color-card: #1C2129;
+  --color-border: #2A303A;
+  --color-text-main: #E8ECF2;
+  --color-text-secondary: #98A2B3;
+  --color-accent: #3B82F6;
+  --color-success: #22C55E;
+  --color-warning: #F59E0B;
+  --color-danger: #EF4444;
+  --color-agent-trend: #60A5FA;
+  --color-agent-sentiment: #A78BFA;
+  --color-agent-spread: #34D399;
+  --color-agent-skeptic: #F87171;
+}
+
+[data-theme="light"] {
+  --color-app: #F5F6F8;
+  --color-sidebar: #ECEEF2;
+  --color-panel: #FFFFFF;
+  --color-card: #F8F9FB;
+  --color-border: #E2E6ED;
+  --color-text-main: #1A1D23;
+  --color-text-secondary: #6B7280;
+  --color-accent: #2563EB;
+  --color-success: #16A34A;
+  --color-warning: #D97706;
+  --color-danger: #DC2626;
+  --color-agent-trend: #3B82F6;
+  --color-agent-sentiment: #7C3AED;
+  --color-agent-spread: #059669;
+  --color-agent-skeptic: #E11D48;
+}
+
+/* Default to dark theme */
+:root {
+  --color-app: #0F1115;
+  --color-sidebar: #13161B;
+  --color-panel: #171A20;
+  --color-card: #1C2129;
+  --color-border: #2A303A;
+  --color-text-main: #E8ECF2;
+  --color-text-secondary: #98A2B3;
+  --color-accent: #3B82F6;
+  --color-success: #22C55E;
+  --color-warning: #F59E0B;
+  --color-danger: #EF4444;
+  --color-agent-trend: #60A5FA;
+  --color-agent-sentiment: #A78BFA;
+  --color-agent-spread: #34D399;
+  --color-agent-skeptic: #F87171;
+}
+
 @layer base {
   body {
     @apply bg-app text-text-main font-sans antialiased overflow-hidden;
@@ -10,7 +66,7 @@
   }
 }
 
-/* Custom Scrollbar for dark theme */
+/* Custom Scrollbar */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
@@ -23,4 +79,31 @@
 }
 ::-webkit-scrollbar-thumb:hover {
   @apply bg-text-secondary;
+}
+
+/* Skeleton shimmer animation */
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+.skeleton {
+  background: linear-gradient(90deg, var(--color-card) 25%, var(--color-border) 50%, var(--color-card) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+  border-radius: 8px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .skeleton { animation: none; }
+}
+
+/* Fade-in animation for tab transitions */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.animate-fadeIn {
+  animation: fadeIn 0.25s ease-out;
+}
+@media (prefers-reduced-motion: reduce) {
+  .animate-fadeIn { animation: none; }
 }

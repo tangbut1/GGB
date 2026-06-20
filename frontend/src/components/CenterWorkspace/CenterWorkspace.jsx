@@ -1,22 +1,25 @@
 import React, { useState } from 'react';
-import { Share, Download, Play, MessageSquare, Bot, AlertTriangle, TrendingUp, Send, CheckCircle2, ChevronRight, Plus } from 'lucide-react';
+import PropTypes from 'prop-types';
+import { Share, Download, Play, MessageSquare, Bot, AlertTriangle, TrendingUp, Send, CheckCircle2, ChevronRight, Plus, PanelRightClose, PanelRight } from 'lucide-react';
 import clsx from 'clsx';
+import useStore from '../../store/analysisStore';
 
-export default function CenterWorkspace({ 
-  onSelectAgent, 
-  onStartAnalysis, 
-  onSendFollowup, 
-  messages, 
-  status, 
-  systemState, 
-  currentQuery 
-}) {
+export default function CenterWorkspace({ onStartAnalysis, onSendFollowup }) {
+  const messages = useStore((s) => s.messages);
+  const status = useStore((s) => s.status);
+  const systemState = useStore((s) => s.systemState);
+  const currentQuery = useStore((s) => s.currentQuery);
+  const rightPanelOpen = useStore((s) => s.rightPanelOpen);
+  const toggleRightPanel = useStore((s) => s.toggleRightPanel);
+  const setActiveTab = useStore((s) => s.setActiveTab);
+
+  const modeMap = { '快速思考': 'fast', '深度思考': 'deep', '多 Agent 辩论': 'multi-agent' };
   const [mode, setMode] = useState('multi-agent');
   const [inputValue, setInputValue] = useState('');
 
   const handleSend = () => {
     if (!inputValue.trim()) return;
-    
+
     if (status === 'idle') {
       onStartAnalysis(inputValue.trim());
     } else {
@@ -33,7 +36,7 @@ export default function CenterWorkspace({
   };
 
   return (
-    <div className="flex-1 flex flex-col h-full overflow-hidden relative">
+    <div className="flex-1 flex flex-col h-full overflow-hidden">
       <div className="h-14 border-b border-border/50 flex items-center justify-between px-6 shrink-0 bg-app/80 backdrop-blur-sm z-10">
         <div className="flex items-center gap-4">
           <h1 className="font-semibold text-text-main truncate max-w-sm">
@@ -44,13 +47,13 @@ export default function CenterWorkspace({
         <div className="flex items-center gap-3">
           <div className="flex bg-sidebar rounded-md border border-border p-1">
             {['快速思考', '深度思考', '多 Agent 辩论'].map(m => (
-              <button 
+              <button
                 key={m}
-                onClick={() => setMode(m === '多 Agent 辩论' ? 'multi-agent' : 'fast')}
+                onClick={() => setMode(modeMap[m])}
                 className={clsx(
                   "px-3 py-1 text-xs rounded-sm transition-colors",
-                  (mode === 'multi-agent' && m === '多 Agent 辩论') || (mode !== 'multi-agent' && m !== '多 Agent 辩论') && m === '快速思考'
-                    ? "bg-card text-text-main shadow-sm" 
+                  (mode === modeMap[m])
+                    ? "bg-card text-text-main shadow-sm"
                     : "text-text-secondary hover:text-text-main"
                 )}
               >
@@ -61,11 +64,19 @@ export default function CenterWorkspace({
           <div className="w-px h-4 bg-border mx-2" />
           <button className="p-1.5 text-text-secondary hover:text-text-main hover:bg-white/5 rounded-md"><Share size={16} /></button>
           <button className="p-1.5 text-text-secondary hover:text-text-main hover:bg-white/5 rounded-md"><Download size={16} /></button>
+          <div className="w-px h-4 bg-border mx-2" />
+          <button
+            onClick={toggleRightPanel}
+            className="p-1.5 text-text-secondary hover:text-text-main hover:bg-white/5 rounded-md transition-colors"
+            title={rightPanelOpen ? '收起分析面板' : '展开分析面板'}
+          >
+            {rightPanelOpen ? <PanelRightClose size={16} /> : <PanelRight size={16} />}
+          </button>
         </div>
       </div>
 
-      <div className="flex-1 overflow-y-auto p-6 space-y-6 pb-32 custom-scrollbar">
-        
+      <div className="flex-1 overflow-y-auto p-6 space-y-6 custom-scrollbar">
+
         {currentQuery && (
           <div className="flex justify-end">
             <div className="bg-card border border-border rounded-2xl rounded-tr-sm p-4 max-w-2xl shadow-sm">
@@ -88,6 +99,27 @@ export default function CenterWorkspace({
         )}
 
         <div className="space-y-4 max-w-3xl">
+          {status === 'analyzing' && messages.length === 0 && (
+            <>
+              {[1, 2, 3].map(i => (
+                <div key={`sk-${i}`} className="p-4 rounded-card border border-border/50">
+                  <div className="flex items-center gap-2 mb-3">
+                    <div className="w-8 h-8 rounded-md skeleton" />
+                    <div className="h-4 w-24 skeleton rounded" />
+                  </div>
+                  <div className="space-y-2">
+                    <div className="h-3 w-full skeleton rounded" />
+                    <div className="h-3 w-5/6 skeleton rounded" />
+                    <div className="h-3 w-4/6 skeleton rounded" />
+                  </div>
+                  <div className="flex items-center gap-2 mt-3">
+                    <div className="h-3 w-20 skeleton rounded" />
+                    <div className="h-3 w-16 skeleton rounded" />
+                  </div>
+                </div>
+              ))}
+            </>
+          )}
           {messages.map((msg, index) => {
             if (msg.type === 'HOST' || msg.author === 'JudgeAgent') {
               return (
@@ -104,7 +136,6 @@ export default function CenterWorkspace({
               );
             }
 
-            // Map author to Agent style
             const styleMap = {
               'TrendAgent': { name: '趋势分析 Agent', icon: <TrendingUp size={16} />, color: 'text-agent-trend', bg: 'bg-agent-trend/10', border: 'border-agent-trend/20' },
               'SentimentAgent': { name: '情感分析 Agent', icon: <MessageSquare size={16} />, color: 'text-agent-sentiment', bg: 'bg-agent-sentiment/10', border: 'border-agent-sentiment/20' },
@@ -115,17 +146,17 @@ export default function CenterWorkspace({
             const style = styleMap[msg.author] || styleMap['default'];
 
             return (
-              <AgentCard 
+              <AgentCard
                 key={index}
-                type={msg.author} 
-                name={style.name} 
-                icon={style.icon} 
+                type={msg.author}
+                name={style.name}
+                icon={style.icon}
                 color={style.color}
                 bg={style.bg}
                 border={style.border}
                 conclusion={msg.content}
-                evidenceCount={Math.floor(Math.random() * 20)}
-                onClick={() => onSelectAgent('evidence')}
+                evidenceCount={msg.evidenceCount ?? Math.min(20, Math.floor((msg.content?.length || 0) / 60) || 3)}
+                onClick={() => setActiveTab('evidence')}
               />
             );
           })}
@@ -133,16 +164,16 @@ export default function CenterWorkspace({
 
       </div>
 
-      <div className="absolute bottom-0 left-0 w-full p-6 bg-gradient-to-t from-app via-app to-transparent pt-12 pointer-events-none">
-        <div className="max-w-4xl mx-auto pointer-events-auto">
+      <div className="shrink-0 w-full px-6 pt-2 pb-6 bg-app">
+        <div className="max-w-4xl mx-auto">
           <div className="flex gap-2 mb-2 px-2">
             {['@引用上一轮结论', '@针对反方质疑', '切换至深度模式'].map(tag => (
               <span key={tag} onClick={() => setInputValue(prev => prev + tag + ' ')} className="text-[11px] text-text-secondary hover:text-text-main cursor-pointer bg-black/20 px-2 py-1 rounded-md border border-white/5">{tag}</span>
             ))}
           </div>
-          
+
           <div className="bg-sidebar border border-border rounded-input shadow-lg flex flex-col p-2 focus-within:border-border/80 focus-within:ring-1 focus-within:ring-border/50 transition-all relative">
-            <textarea 
+            <textarea
               value={inputValue}
               onChange={(e) => setInputValue(e.target.value)}
               onKeyDown={handleKeyDown}
@@ -156,7 +187,7 @@ export default function CenterWorkspace({
                 <div className="h-4 w-px bg-border mx-1" />
                 <span className="text-xs text-text-secondary bg-white/5 px-2 py-0.5 rounded-md">基于当前上下文</span>
               </div>
-              <button 
+              <button
                 onClick={handleSend}
                 disabled={status === 'analyzing' || !inputValue.trim()}
                 className="bg-accent hover:bg-accent/90 disabled:bg-accent/50 disabled:cursor-not-allowed text-white p-2 rounded-xl transition-colors shadow-sm"
@@ -170,6 +201,11 @@ export default function CenterWorkspace({
     </div>
   );
 }
+
+CenterWorkspace.propTypes = {
+  onStartAnalysis: PropTypes.func.isRequired,
+  onSendFollowup: PropTypes.func.isRequired,
+};
 
 function AgentCard({ type, name, icon, color, bg, border, conclusion, evidenceCount, onClick }) {
   return (
@@ -190,7 +226,7 @@ function AgentCard({ type, name, icon, color, bg, border, conclusion, evidenceCo
         <button className="text-xs text-text-secondary hover:text-text-main flex items-center gap-1 transition-colors">
           查看引用 ({evidenceCount}) <ChevronRight size={12} />
         </button>
-        <button 
+        <button
           onClick={onClick}
           className="text-xs text-accent hover:text-accent/80 transition-colors"
         >
@@ -200,3 +236,15 @@ function AgentCard({ type, name, icon, color, bg, border, conclusion, evidenceCo
     </div>
   );
 }
+
+AgentCard.propTypes = {
+  type: PropTypes.string,
+  name: PropTypes.string.isRequired,
+  icon: PropTypes.element.isRequired,
+  color: PropTypes.string.isRequired,
+  bg: PropTypes.string.isRequired,
+  border: PropTypes.string.isRequired,
+  conclusion: PropTypes.string,
+  evidenceCount: PropTypes.number.isRequired,
+  onClick: PropTypes.func.isRequired,
+};

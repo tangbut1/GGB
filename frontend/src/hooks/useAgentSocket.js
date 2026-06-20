@@ -1,15 +1,24 @@
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useRef } from 'react';
 import { io } from 'socket.io-client';
+import useStore from '../store/analysisStore';
 
-export function useAgentSocket(taskId) {
-  const [socket, setSocket] = useState(null);
-  const [messages, setMessages] = useState([]);
-  const [status, setStatus] = useState('idle'); // idle, analyzing, completed, error
-  const [systemState, setSystemState] = useState('');
-  const [analysisData, setAnalysisData] = useState(null);
+export function useAgentSocket() {
+  const taskId = useStore((s) => s.currentTaskId);
+  const setMessages = useStore((s) => s.setMessages);
+  const setStatus = useStore((s) => s.setStatus);
+  const setSystemState = useStore((s) => s.setSystemState);
+  const setAnalysisData = useStore((s) => s.setAnalysisData);
+  const resetMessages = useStore((s) => s.resetMessages);
+
+  const socketRef = useRef(null);
 
   useEffect(() => {
     if (!taskId) return;
+
+    // Reset state for new task
+    resetMessages();
+    setStatus('analyzing');
+    setSystemState('已开始分析...');
 
     // Connect to Socket.IO backend
     const newSocket = io({
@@ -17,55 +26,47 @@ export function useAgentSocket(taskId) {
       transports: ['websocket', 'polling']
     });
 
-    setSocket(newSocket);
-    setStatus('analyzing');
-    setMessages([]);
-    setAnalysisData(null);
-    setSystemState('已开始分析...');
+    socketRef.current = newSocket;
 
     newSocket.on('connect', () => {
       console.log('Socket connected, joining room:', taskId);
       newSocket.emit('join', { task_id: taskId });
     });
 
-    // Handle agent lifecycle updates (CollectAgent, SentimentAgent, etc)
     newSocket.on('agent_update', (data) => {
-      // data: { agent: "CollectAgent", status: "active"|"done"|"err", progress: 5 }
       const statusText = data.status === 'active' ? '运行中' : data.status === 'done' ? '已完成' : '异常';
       setSystemState(`${data.agent} ${statusText} (${data.progress}%)`);
     });
 
-    // Handle debate/forum turns
     newSocket.on('debate_turn', (data) => {
-      // data: { author: "TrendAgent", type: "AGENT", content: "..." }
-      setMessages(prev => [...prev, {
+      useStore.getState().addMessage({
         id: Date.now() + Math.random(),
         ...data
-      }]);
+      });
     });
 
-    // Handle host/judge messages
     newSocket.on('forum_message', (data) => {
-       // data: { type: "HOST", content: "..." }
-       if (data.type === 'HOST') {
-         setMessages(prev => [...prev, {
-           id: Date.now() + Math.random(),
-           author: 'JudgeAgent',
-           type: 'HOST',
-           content: data.content
-         }]);
-       }
+      if (data.type === 'HOST') {
+        useStore.getState().addMessage({
+          id: Date.now() + Math.random(),
+          author: 'JudgeAgent',
+          type: 'HOST',
+          content: data.content
+        });
+      }
     });
 
-    // Handle errors
     newSocket.on('error', (data) => {
       setStatus('error');
       setSystemState(`错误: ${data.message || '未知错误'}`);
+      try {
+        window.dispatchEvent(new CustomEvent('app:toast', {
+          detail: { type: 'error', message: data.message || '未知错误' }
+        }));
+      } catch (_) { /* ignore */ }
     });
 
-    // Handle completion
     newSocket.on('task_complete', (data) => {
-      // data: { task_id, status: "completed", data: { ... } }
       console.log('Task Complete:', data);
       setStatus(data.status);
       setSystemState(data.status === 'completed' ? '分析完成' : '分析终止');
@@ -75,15 +76,9 @@ export function useAgentSocket(taskId) {
     });
 
     return () => {
+      newSocket.removeAllListeners();
       newSocket.disconnect();
+      socketRef.current = null;
     };
   }, [taskId]);
-
-  return {
-    socket,
-    messages,
-    status,
-    systemState,
-    analysisData
-  };
 }

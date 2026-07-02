@@ -18,7 +18,7 @@ class ReportAgent(BaseAgent):
         trend_results = input_data.get("trend_results", {})
         keyword = input_data.get("keyword", "未知关键词")
         task_id = input_data.get("task_id", "default")
-        forum_messages = input_data.get("forum_messages", [])
+                forum_messages = input_data.get("forum_messages") or input_data.get("forum_log", [])
 
         report_data = {
             "keyword": keyword,
@@ -68,7 +68,7 @@ class ReportAgent(BaseAgent):
         report_data["ai_insights"] = ai_insights
 
         # 生成结构化 debate_cards（供前端辩论区直接渲染）
-        debate_cards = self._generate_debate_cards(forum_log, sentiment_summary, trend_summary)
+                debate_cards = self._generate_debate_cards(forum_messages, sentiment_summary, trend_summary)
         report_data["debate_cards"] = debate_cards
         ai_insights["debate_cards"] = debate_cards
 

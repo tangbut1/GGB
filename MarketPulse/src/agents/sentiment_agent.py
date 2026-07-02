@@ -129,16 +129,16 @@ class SentimentAgent(BaseAgent):
             }
 
         # LLM 返回纯文本时，用启发式调整
-        total = algo_summary.get("total_news", 1)
+                total = max(algo_summary.get("total_news", 1), 1)
         pos = algo_summary.get("positive_count", 0)
         neg = max(1, int(total * 0.15))  # 至少有 15% 负面
         neu = total - pos - neg
         if neu < 0:
             neu = 0
         return {
-            "positive_count": pos - int(neg * 0.3),
+                        "positive_count": max(0, pos - int(neg * 0.3)),
             "negative_count": neg + int(neg * 0.3),
-            "neutral_count": neu,
+                        "neutral_count": max(0, total - max(0, pos - int(neg * 0.3)) - (neg + int(neg * 0.3))),
             "avg_sentiment": algo_summary.get("avg_sentiment", 0) - 0.1,
             "key_finding": "FinBERT 基础分类完成：已进行经验权重调整",
         }

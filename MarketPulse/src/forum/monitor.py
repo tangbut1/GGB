@@ -42,13 +42,13 @@ class ForumMonitor:
             # 触发条件：消息大于阈值，或者消息>0且距离上一次有一段时间
             if agent_msg_count >= self.trigger_threshold or (agent_msg_count > 0 and time_since_last_msg > 10):
                 # 子线程异步调用，避免 HTTP 请求阻塞 Monitor 主循环导致日志推送卡顿
-                threading.Thread(target=self._trigger_host, args=(list(lines),), daemon=True).start()
+                                threading.Thread(target=self._trigger_host, args=(self.log_manager.get_all_messages(),), daemon=True).start()
                 agent_msg_count = 0
                 
             time.sleep(1)
             
-    def _trigger_host(self, all_lines: list):
-        context = "".join(all_lines[-20:]) # 截取最近20行
-        summary = self.llm_host.generate_guidance(context)
+        def _trigger_host(self, forum_messages: list):
+                recent_messages = forum_messages[-20:]  # 截取最近20条结构化消息
+                summary = self.llm_host.generate_guidance(recent_messages)
         if summary:
             self.log_manager.write("HOST", 1, summary)

@@ -68,7 +68,7 @@ class LLMHost:
             
             usage = data.get("usage", {})
             if "choices" in data and len(data["choices"]) > 0:
-                return data["choices"][0]["message"]["content"].strip(), usage
-            return "【HOST错误】：API返回异常", usage
+                            return data["choices"][0]["message"]["content"].strip()
+                    return "【HOST错误】：API返回异常"
         except Exception as e:
-            return f"【HOST错误】：{str(e)}", {}
+                    return f"【HOST错误】：{str(e)}"

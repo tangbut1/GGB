@@ -4,6 +4,7 @@ from typing import Dict, Any
 from .base_agent import BaseAgent
 from ..analysis.sentiment_analysis import SentimentAnalyzer
 
+
 class SentimentAgent(BaseAgent):
     def _get_system_prompt(self) -> str:
         return (
@@ -26,7 +27,6 @@ class SentimentAgent(BaseAgent):
         analyzed_news = analyzer.analyze_news_batch(news_data)
         algo_summary = analyzer.get_sentiment_summary(analyzed_news)
 
-        # ── LLM 校正情感分布 ──
         sample_news = analyzed_news[:25]
         samples_text = []
         for i, n in enumerate(sample_news):
@@ -55,7 +55,6 @@ class SentimentAgent(BaseAgent):
 
         corrected = self._parse_sentiment_correction(llm_prompt, algo_summary)
 
-        # ── 用 LLM 校正结果更新 summary ──
         summary = dict(algo_summary)
         summary["positive_count"] = corrected["positive_count"]
         summary["negative_count"] = corrected["negative_count"]
@@ -67,13 +66,12 @@ class SentimentAgent(BaseAgent):
         summary["algo_negative_count"] = algo_summary.get("negative_count", 0)
         summary["algo_neutral_count"] = algo_summary.get("neutral_count", 0)
 
-        # ── 对个体新闻标签也做校正 ──
         if analyzed_news:
             self._apply_label_correction(analyzed_news, corrected)
 
         insight = corrected.get("key_finding", "")
         markdown_report = corrected.get("markdown", "")
-        
+
         if markdown_report:
             self.write_to_forum_log(f"【总结】：{insight}\n\n{markdown_report}")
         elif insight:
@@ -86,30 +84,26 @@ class SentimentAgent(BaseAgent):
                 "analyzed_news": analyzed_news,
                 "summary": summary
             },
-            "summary": insight or f"情绪分析完成"
+            "summary": insight or "情绪分析完成"
         }
 
     def _parse_sentiment_correction(self, prompt: str, algo_summary: dict) -> dict:
         response = self.call_llm(prompt)
         response = (response or "").strip()
 
-        # 尝试提取 JSON 和后面的 Markdown
         json_str = response
         markdown_str = ""
-        
-        # 如果包含 markdown block
+
         json_match = re.search(r'```(?:json)?(.*?)```', response, re.DOTALL)
         if json_match:
             json_str = json_match.group(1).strip()
-            # 找到 JSON 块之后的内容作为 markdown
             markdown_str = response[json_match.end():].strip()
         else:
-            # 找大括号
             first = response.find('{')
             last = response.rfind('}')
             if first != -1 and last != -1 and last > first:
-                json_str = response[first:last+1]
-                markdown_str = response[last+1:].strip()
+                json_str = response[first:last + 1]
+                markdown_str = response[last + 1:].strip()
 
         def try_parse(text):
             try:
@@ -128,19 +122,18 @@ class SentimentAgent(BaseAgent):
                 "markdown": markdown_str
             }
 
-        # LLM 返回纯文本时，用启发式调整
-        total = algo_summary.get("total_news", 1)
+        # fix: 修正兜底分支中 total 和后续赋值的缩进错误
+        total = max(algo_summary.get("total_news", 1), 1)
         pos = algo_summary.get("positive_count", 0)
-        neg = max(1, int(total * 0.15))  # 至少有 15% 负面
-        neu = total - pos - neg
-        if neu < 0:
-            neu = 0
+        neg = max(1, int(total * 0.15))
+        neu = max(0, total - pos - neg)
         return {
-            "positive_count": pos - int(neg * 0.3),
+            "positive_count": max(0, pos - int(neg * 0.3)),
             "negative_count": neg + int(neg * 0.3),
-            "neutral_count": neu,
+            "neutral_count": max(0, total - max(0, pos - int(neg * 0.3)) - (neg + int(neg * 0.3))),
             "avg_sentiment": algo_summary.get("avg_sentiment", 0) - 0.1,
             "key_finding": "FinBERT 基础分类完成：已进行经验权重调整",
+            "markdown": ""
         }
 
     @staticmethod
@@ -149,10 +142,8 @@ class SentimentAgent(BaseAgent):
         total = len(analyzed_news)
         target_neg = corrected.get("negative_count", 0)
         target_pos = corrected.get("positive_count", 0)
-        # 防止 neg + pos > total 导致同一条新闻同时被标为负和正
         target_neg = min(target_neg, total - target_pos)
 
-        # 按 FinBERT 融合分数排序，最低分的标记为负面
         sorted_news = sorted(analyzed_news, key=lambda n: n.get("sentiment_score", 0))
         for i, news in enumerate(sorted_news):
             if i < target_neg:
@@ -163,4 +154,3 @@ class SentimentAgent(BaseAgent):
                 news["sentiment_score"] = max(news.get("sentiment_score", 0), 0.15)
             else:
                 news["sentiment_label"] = "neutral"
-

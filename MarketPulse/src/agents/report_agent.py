@@ -18,7 +18,8 @@ class ReportAgent(BaseAgent):
         trend_results = input_data.get("trend_results", {})
         keyword = input_data.get("keyword", "未知关键词")
         task_id = input_data.get("task_id", "default")
-        forum_messages = input_data.get("forum_messages", [])
+        # fix: 修正 forum_messages 多余缩进
+        forum_messages = input_data.get("forum_messages") or input_data.get("forum_log", [])
 
         report_data = {
             "keyword": keyword,
@@ -67,8 +68,8 @@ class ReportAgent(BaseAgent):
         ai_insights["forum_debate"] = forum_debate
         report_data["ai_insights"] = ai_insights
 
-        # 生成结构化 debate_cards（供前端辩论区直接渲染）
-        debate_cards = self._generate_debate_cards(forum_log, sentiment_summary, trend_summary)
+        # fix: 修正 debate_cards 多余缩进
+        debate_cards = self._generate_debate_cards(forum_messages, sentiment_summary, trend_summary)
         report_data["debate_cards"] = debate_cards
         ai_insights["debate_cards"] = debate_cards
 
@@ -92,7 +93,6 @@ class ReportAgent(BaseAgent):
         if not forum_log:
             return []
 
-        # 过滤出 Agent 发言，跳过 SYSTEM 和日志头
         agent_pattern = re.compile(
             r'\[[\d\-:\s]+\]\s*\[(HOST|CollectAgent|SentimentAgent|TrendAgent|ReportAgent)\]\s*\[Round\s*(\d+)\]\s*(.+)'
         )
@@ -108,11 +108,9 @@ class ReportAgent(BaseAgent):
             round_num = int(m.group(2))
             content = m.group(3).strip()
 
-            # 跳过无实质内容
             if len(content) < 5:
                 continue
 
-            # 分类
             entry_type = "insight"
             if agent == "HOST":
                 entry_type = "summary"
@@ -121,14 +119,12 @@ class ReportAgent(BaseAgent):
             elif any(kw in content for kw in ["建议", "应该", "请", "需要"]):
                 entry_type = "action"
 
-            # HOST 盲区提取
             blind_spots = []
             if agent == "HOST":
                 for m2 in re.finditer(r'@(\w+)\s*[:：]?\s*([^@]+?)(?=@|【|$)', content):
                     spot = m2.group(2).strip()
                     if len(spot) > 3:
                         blind_spots.append(spot)
-                # 也匹配 【盲区引导】 格式
                 guide_match = re.search(r'【盲区引导】[：:]\s*(.+)', content)
                 if guide_match:
                     parts = re.split(r'[@\n]', guide_match.group(1))
@@ -136,7 +132,6 @@ class ReportAgent(BaseAgent):
                         p = p.strip()
                         if len(p) > 3 and p not in blind_spots:
                             blind_spots.append(p)
-                # 兜底：LLM 未按格式输出时，提取含疑问/风险/不足的句子作为盲区
                 if not blind_spots:
                     concern_kw = ["不足", "风险", "注意", "遗漏", "忽视", "缺失", "待验证", "不确定", "未知"]
                     for sent in re.split(r'[。；;?\n]', content):
@@ -148,12 +143,10 @@ class ReportAgent(BaseAgent):
                             if len(blind_spots) >= 3:
                                 break
 
-            # 提取核心观点：选最有观点性的句子（而非第一句）
             key_point = ReportAgent._pick_opinionated_sentence(content)
             if not key_point:
                 key_point = content[:60]
 
-            # 压缩内容：保留原话语气，过滤报告体词汇
             compressed = ReportAgent._compress_debate_content(content)
 
             debate_entries.append({
@@ -165,7 +158,6 @@ class ReportAgent(BaseAgent):
                 "blind_spots": blind_spots,
             })
 
-        # 按 round 和时间顺序排列
         debate_entries.sort(key=lambda e: (e["round"], {
             "CollectAgent": 0, "SentimentAgent": 1, "TrendAgent": 2, "HOST": 3, "ReportAgent": 4
         }.get(e["agent"], 5)))
@@ -178,12 +170,11 @@ class ReportAgent(BaseAgent):
         if not forum_messages:
             return []
 
-        # 已经天然是 dict，无需正则合并多行
         entries = forum_messages
 
-        # ── Step B: 过滤过程日志（HOST 不过滤）──
         process_kw = ["补充词", "新数据", "采集完成", "开始采集", "搜索完成",
                       "已采集", "源返回", "共获得", "搜索关键词", "开始搜索"]
+
         def _is_process_log(e):
             if e["agent"] == "HOST":
                 return False
@@ -194,7 +185,6 @@ class ReportAgent(BaseAgent):
 
         clean_entries = [e for e in entries if not _is_process_log(e)]
 
-        # ── Step C: 按 agent+round 合并 ──
         agent_icon_map = {
             "CollectAgent": "📡", "SentimentAgent": "🔴",
             "TrendAgent": "🔵", "ReportAgent": "📄", "HOST": "🧑‍⚖️"
@@ -203,7 +193,6 @@ class ReportAgent(BaseAgent):
             "CollectAgent": "采集Agent", "SentimentAgent": "危机分析 (Red Team)",
             "TrendAgent": "理性分析 (Blue Team)", "ReportAgent": "报告Agent", "HOST": "研判法官 (Judge)"
         }
-        # 排序优先级
         priority_map = {"HOST": 0, "TrendAgent": 1, "SentimentAgent": 2, "CollectAgent": 3, "ReportAgent": 4}
 
         grouped = {}
@@ -216,10 +205,8 @@ class ReportAgent(BaseAgent):
         cards = []
         for (agent, rnd), items in sorted(grouped.items(), key=lambda x: (x[0][1], priority_map.get(x[0][0], 9))):
             if agent == "HOST":
-                # 只取该 round 最后一条 HOST
                 selected = items[-1]
             elif agent == "CollectAgent":
-                # 优先取结论行（含采集完毕/共获取/有效数据/平台分布/采集完成/共采集/总计）
                 conclusion_kw = ["采集完毕", "共获取", "有效数据", "平台分布", "采集完成", "共采集", "总计"]
                 selected = None
                 for it in items:
@@ -229,14 +216,11 @@ class ReportAgent(BaseAgent):
                 if not selected:
                     selected = max(items, key=lambda it: len(it["content"]))
             elif agent in ("SentimentAgent", "TrendAgent", "ReportAgent"):
-                # 取该 round 最后一条
                 selected = items[-1]
             else:
                 selected = items[-1]
 
-            # ── Step D: heuristic summary + highlights ──
             body = selected["content"]
-            # HOST 盲区提取（复用已有正则）
             blind_spots = []
             if agent == "HOST":
                 for m2 in re.finditer(r'@(\w+)\s*[:：]?\s*([^@]+?)(?=@|【|$)', body):
@@ -260,16 +244,15 @@ class ReportAgent(BaseAgent):
                             if len(blind_spots) >= 3:
                                 break
 
-            # 清洗文本用于提取
             cleaned = re.sub(r'^#{1,6}\s+', '', body, flags=re.MULTILINE)
             cleaned = re.sub(r'\*{1,3}(.*?)\*{1,3}', r'\1', cleaned)
 
-            # summary: 第一句非空话的完整句子
             bland_fragments = ["好的，以下", "好的，下面", "好的，接下来",
                                "以下是基于", "以下是基于现有", "基于现有数据与模型",
                                "下面是基于", "以下报告基于", "趋势综述", "以下为",
                                "综合分析", "基于以上", "综合来看", "总体而言",
                                "据分析", "根据当前", "据此"]
+
             def _is_bland(sentence):
                 return any(frag in sentence for frag in bland_fragments)
 
@@ -288,7 +271,6 @@ class ReportAgent(BaseAgent):
                 summary = s[:60] + ("..." if len(s) > 60 else "")
                 break
             if not summary:
-                # fallback: 取 content 最长一行（跳过极短行和 bland 行）
                 lines = [l.strip() for l in cleaned.split('\n') if len(l.strip()) > 8]
                 best = ""
                 for l in lines:
@@ -296,7 +278,6 @@ class ReportAgent(BaseAgent):
                         best = l
                 summary = (best or cleaned)[:60]
 
-            # highlights: 2-3 条质量句子
             highlights = []
             highlight_full_sentences = []
             for s in sentences:
@@ -309,36 +290,29 @@ class ReportAgent(BaseAgent):
                     continue
                 if s == summary_full_sentence:
                     continue
-                
-                # 清除句子开头的【总结】、【核心发现】等不必要的标识
                 s_clean = re.sub(r'^【.*?】[：:]?\s*', '', s)
                 if len(s_clean) < 10:
                     continue
-                
                 highlights.append(s_clean[:100] + ("..." if len(s_clean) > 100 else ""))
                 highlight_full_sentences.append(s)
                 if len(highlights) >= 3:
                     break
 
-            # 生成剔除摘要和高亮后的剩余文本，用于无缝追加展示
-            # 找到最后被提取为 summary 或 highlight 的句子位置，截断它之前的所有内容
             last_sentence = ""
             if highlight_full_sentences:
                 last_sentence = highlight_full_sentences[-1]
             elif summary_full_sentence:
                 last_sentence = summary_full_sentence
-                
+
             rest_text = cleaned
             if last_sentence:
                 idx = cleaned.find(last_sentence)
                 if idx != -1:
                     end_idx = idx + len(last_sentence)
-                    # 跳过结尾的标点符号和空白字符
                     while end_idx < len(cleaned) and cleaned[end_idx] in '。！？\n\r\t ':
                         end_idx += 1
                     rest_text = cleaned[end_idx:]
-            
-            # 清理残留的可能孤立的小标题，比如如果高亮部分后面紧跟着空洞的标题
+
             rest_text = re.sub(r'^(【.*?】|#+\s+.*?)[：:]?\s*$', '', rest_text, flags=re.MULTILINE)
             rest_text = rest_text.strip()
 
@@ -359,8 +333,6 @@ class ReportAgent(BaseAgent):
 
     @staticmethod
     def _pick_opinionated_sentence(content: str) -> str:
-        """选出最有观点性的一句，而非简单取第一句。
-        评分标准：包含强判断词（置信度 X%、严禁、严重、不能用、风险）的句子得分更高"""
         sentences = re.split(r'[。；;]', content)
         if not sentences:
             return ""
@@ -375,11 +347,10 @@ class ReportAgent(BaseAgent):
             s = s.strip()
             if len(s) < 8:
                 continue
-            score = len(s)  # 基础分：句子长度
+            score = len(s)
             for w in strong_words:
                 if w in s:
-                    score += 20  # 强判断词加权
-            # 报告体弱化词扣分
+                    score += 20
             for w in ["综合来看", "总体而言", "据此", "整体上", "较为"]:
                 if w in s:
                     score -= 10
@@ -390,8 +361,6 @@ class ReportAgent(BaseAgent):
 
     @staticmethod
     def _compress_debate_content(content: str) -> str:
-        """压缩 Agent 发言，保留原话语气，过滤报告体废话前缀"""
-        # 剥离报告体前缀
         prefixes = [
             "据此判断，", "综合来看，", "总体而言，", "根据当前数据，",
             "我的分析显示，", "经分析，", "基于以上数据，", "整体上，",
@@ -401,7 +370,6 @@ class ReportAgent(BaseAgent):
             if content.startswith(pf):
                 content = content[len(pf):]
                 break
-        # 截断到 120 字，在句号处断
         if len(content) <= 120:
             return content
         truncated = content[:120]
@@ -412,20 +380,16 @@ class ReportAgent(BaseAgent):
 
     @staticmethod
     def _parse_markdown_insights(text: str, keyword: str) -> dict:
-        """当 LLM 输出 Markdown 结构（## 标题 + 段落）而非 JSON 时的兜底解析"""
         if not text or "{" in text:
-            return {}  # 有 { 说明可能含 JSON，不在此处理
+            return {}
 
-        # 检测 Markdown 结构特征
         has_headings = bool(re.search(r'^#{1,4}\s+', text, re.MULTILINE))
         if not has_headings:
             return {}
 
-        # 提取 headline：第一个 ## 标题
         headline_match = re.search(r'^#{1,2}\s*(?:[\d.]+\s*)?(.+?)$', text, re.MULTILINE)
         headline = headline_match.group(1).strip()[:25] if headline_match else f"{keyword}舆情洞察"
 
-        # 提取各段小标题作为 insights
         sections = re.split(r'\n(?=#{2,4}\s+)', text)
         insights = []
         type_keywords = {
@@ -441,26 +405,19 @@ class ReportAgent(BaseAgent):
                 continue
             heading_level = len(title_match.group(0)) - len(title_match.group(0).lstrip('#'))
             title = title_match.group(1).strip()[:20]
-            # 只处理 ### / #### 的 insight 级别标题，跳过 ## 的章节标题
             if heading_level <= 2:
                 continue
-            # 提取段落正文（标题之后的内容）
             body_start = title_match.end()
             body = sec[body_start:].strip()
-            # 清理正文
             body = re.sub(r'\n+', ' ', body)[:120]
 
-            # 判断类型
             ins_type = "trend"
             for t, kws in type_keywords.items():
                 if any(kw in title + body for kw in kws):
                     ins_type = t
                     break
 
-            # 判断是否为反共识
             contrarian = any(w in title + body for w in ["反直觉", "反共识", "悖论", "异常", "表面", "隐藏"])
-
-            # 提取置信度
             conf_match = re.search(r'(\d{1,3})%', body)
             confidence = float(int(conf_match.group(1)) / 100) if conf_match else 0.6
 
@@ -478,7 +435,6 @@ class ReportAgent(BaseAgent):
         if len(insights) < 2:
             return {}
 
-        # 提取 action_signal
         neg_words = sum(1 for w in ["风险", "危机", "负面", "下跌", "崩"] if w in text)
         pos_words = sum(1 for w in ["机会", "利好", "增长", "正面", "突破"] if w in text)
         if neg_words > pos_words + 1:
@@ -490,7 +446,6 @@ class ReportAgent(BaseAgent):
         else:
             action_signal = "neutral"
 
-        # 提取盲区（以 ? 或 ？ 结尾的句子）
         blind_spots = []
         for sent in re.split(r'[。\n]', text):
             sent = sent.strip()
@@ -505,7 +460,7 @@ class ReportAgent(BaseAgent):
             "one_week_prediction": "",
         }
 
-    # ── AI 深度解读 ──────────────────────────────────────────────
+    # ── AI 深度解读 ────────────────────────────────────────────────
     def _generate_ai_insights(
         self,
         keyword: str,
@@ -580,20 +535,16 @@ JSON 格式（严格遵循，不要修改 key 名）：
         response = self.call_llm_with_system(system_prompt, user_prompt, temperature=0.1)
         response = response.strip()
 
-        # ── 多级兜底：强制提取 JSON ──
-        # Level 1: 剥离 markdown 代码块
         if response.startswith("```"):
             response = re.sub(r"^```(?:json)?\s*\n?", "", response)
             response = re.sub(r"\n?```\s*$", "", response)
             response = response.strip()
 
-        # Level 2: 直接解析
         try:
             return json.loads(response)
         except json.JSONDecodeError:
             pass
 
-        # Level 3: 找到第一个 { 到最后一个 } 之间的内容
         first_brace = response.find("{")
         last_brace = response.rfind("}")
         if first_brace != -1 and last_brace != -1 and last_brace > first_brace:
@@ -603,7 +554,6 @@ JSON 格式（严格遵循，不要修改 key 名）：
             except json.JSONDecodeError:
                 pass
 
-        # Level 4: 正则兜底
         match = re.search(r'\{.*\}', response, re.DOTALL)
         if match:
             try:
@@ -611,7 +561,6 @@ JSON 格式（严格遵循，不要修改 key 名）：
             except json.JSONDecodeError:
                 pass
 
-        # Level 5: Markdown 结构解析（LLM 输出了 ## Title 格式时）
         md_parsed = self._parse_markdown_insights(response, keyword)
         if md_parsed:
             return md_parsed
@@ -622,7 +571,7 @@ JSON 格式（严格遵循，不要修改 key 名）：
             "blind_spots": [f"LLM 返回格式异常，请重试。原始响应前200字符: {response[:200]}"],
             "action_signal": "neutral",
             "one_week_prediction": ""
-            }
+        }
 
     @staticmethod
     def _format_posts(news_list: list) -> str:
@@ -657,11 +606,11 @@ JSON 格式（严格遵循，不要修改 key 名）：
         red_text = []
         blue_text = []
         host_text = []
-        
+
         agent_pattern = re.compile(
             r'\[[\d\-:\s]+\]\s*\[(HOST|CollectAgent|SentimentAgent|TrendAgent|ReportAgent)\]\s*\[Round\s*(\d+)\]\s*(.+)'
         )
-        
+
         for line in forum_log:
             m = agent_pattern.match(line.strip())
             if m:
@@ -707,13 +656,13 @@ JSON 格式（严格遵循，不要修改 key 名）：
 }}
 """
         response = self._call_llm_inner(sys_prompt, user_prompt)
-        
+
         try:
             clean_resp = response.replace("```json", "").replace("```", "").strip()
             first_brace = clean_resp.find("{")
             last_brace = clean_resp.rfind("}")
             if first_brace != -1 and last_brace != -1:
-                clean_resp = clean_resp[first_brace:last_brace+1]
+                clean_resp = clean_resp[first_brace:last_brace + 1]
             return json.loads(clean_resp)
         except Exception:
             return {

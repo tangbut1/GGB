@@ -133,6 +133,21 @@ class TaskStore:
                 running.append(f.stem)
         return running
 
+    def list_all(self) -> list[Dict[str, Any]]:
+        """全部任务，不限条数。
+
+        list_recent 的 50 条上限是给侧边栏用的——它只需要最近的一屏。
+        "清空历史"要的是把磁盘上真实存在的东西全删掉，用 list_recent 会在
+        超过 50 条时静默漏删，用户看到列表空了、目录里却还留着文件。
+        """
+        files = sorted(self.store_dir.glob("*.json"), key=lambda p: p.stat().st_mtime, reverse=True)
+        tasks: list[Dict[str, Any]] = []
+        for f in files:
+            data = self._read(f.stem)
+            if data:
+                tasks.append(data)
+        return tasks
+
     # ── internals ────────────────────────────────────────────────────────────
 
     def _safe_stem(self, task_id: str) -> str:

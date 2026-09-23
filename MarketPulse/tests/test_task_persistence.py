@@ -23,8 +23,13 @@ def flask_app():
 
 
 @pytest.fixture
-def store(flask_app, tmp_path):
-    """Point the app at a throwaway store and isolate task_history."""
+def store(flask_app, isolated_memory, tmp_path):
+    """Point the app at a throwaway store and isolate task_history.
+
+    ``isolated_memory`` 也必须挂上：``/analyze`` 会往 memory_store 里建
+    项目、开会话、写每段发言。只换 TaskStore 的话，"落盘测试""失败测试"
+    会留在我真实的记忆库里，侧边栏从此多出两条点不开的记录。
+    """
     from src.knowledge.task_store import TaskStore
     replacement = TaskStore(str(tmp_path / "tasks"))
     with pytest.MonkeyPatch.context() as mp:
@@ -173,6 +178,55 @@ def test_failed_task_is_persisted_with_error(flask_app, store):
 
     assert entry["status"] == "error"
     assert entry["error"] == "采集不到真实结果"
+
+
+def test_analyze_does_not_touch_the_real_memory_store(flask_app, store):
+    """/analyze 的写入必须全部落在被隔离的库里。
+
+    ``/analyze`` 是一条完整的记忆写入路径：ensure_project 建项目、
+    start_conversation 开会话、append_message 存发言、finish_conversation
+    收尾。这几个调用走的是模块级的 ``memory_store`` 引用，所以只要 fixture
+    没把它换掉，测试关键词就会进我真实的 data/memory/project_memory.db——
+    跑一遍 pytest，侧边栏里就多出"落盘测试""契约测试"这些点开什么都没有
+    的记录。这个用例守住那条线：隔离后的库里要有记录，真实的库里不能有。
+    """
+    import threading
+
+    release = threading.Event()
+
+    class StubOrchestrator:
+        def __init__(self, task_id, keyword, config, forum_manager, monitor,
+                     socketio=None, local_data_path=None, src_mode="news",
+                     memory_context=""):
+            self.task_id = task_id
+            self.forum_manager = forum_manager
+
+        def run_pipeline(self):
+            release.wait(timeout=10)
+            self.forum_manager.write("SentimentAgent", 1, "红方立论")
+            return {"status": "success", "summary": "done",
+                    "data": {"report_data": {"sentiment_summary": {"total_news": 1}}}}
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(flask_app, "OrchestratorAgent", StubOrchestrator)
+        resp = flask_app.app.test_client().post(
+            "/analyze", json={"keyword": "隔离校验", "srcMode": "news"})
+        task_id = resp.get_json()["task_id"]
+        release.set()
+
+        deadline = time.time() + 15
+        while time.time() < deadline:
+            entry = store.get(task_id)
+            if entry and entry.get("status") in ("completed", "error"):
+                break
+            time.sleep(0.2)
+
+    # 隔离库：这一轮确实写进去了，否则这条用例什么也没验证
+    assert flask_app.memory_store.find_conversation_by_task(task_id) is not None
+    # 真实库：一个字节都不能多
+    from src.knowledge.project_memory import ProjectMemoryStore
+    real = ProjectMemoryStore(flask_app.MEMORY_DB_PATH)
+    assert real.find_conversation_by_task(task_id) is None
 
 
 # ── 历史对话回放 ──────────────────────────────────────────────────────────

@@ -35,7 +35,7 @@ def test_to_debate_turn_filters_internal_messages(flask_app):
     assert conv({"agent": "TrendAgent", "round": 1, "content": "蓝方立论"})["role"] == "blue"
 
 
-def test_socket_end_to_end_debate_events(flask_app):
+def test_socket_end_to_end_debate_events(flask_app, isolated_memory):
     """A stubbed pipeline must produce exactly the frontend's event contract."""
     socketio = flask_app.socketio
     release = threading.Event()

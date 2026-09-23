@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from 'react';
 import { io } from 'socket.io-client';
-import { debateFollowup } from '../services/api';
+import { debateFollowup, cancelFollowup } from '../services/api';
 
 // 与后端 ROLE_MAP 对应：前端按 role 渲染红/蓝/裁判/采集卡片
 const ROLE_BY_AGENT = {
@@ -80,6 +80,9 @@ export function useAgentSocket(taskId, restored) {
   // 期间输入框要禁用，否则用户会在辩论中途再发一条，两轮辩论的发言交错
   // 在一起，卡片上的"第 N 轮"就串了。
   const [debatePending, setDebatePending] = useState(null);
+  // 非 null 表示上一轮追问被用户中止、且还没续跑。前端据此显示"继续"按钮。
+  // 只有"中止"会产生这个状态：正常结束、失败、以及用户另发新问题都会清掉它。
+  const [followupCancelled, setFollowupCancelled] = useState(null);
 
   // 去重：同一 (author, round, content) 只渲染一次
   const seenTurns = useRef(new Set());
@@ -98,6 +101,7 @@ export function useAgentSocket(taskId, restored) {
       setProgress(0);
       setSystemState('');
       setDebatePending(null);
+      setFollowupCancelled(null);
       return;
     }
 
@@ -123,6 +127,7 @@ export function useAgentSocket(taskId, restored) {
       setFollowups([]);
       setAnalysisData(restored.analysis_data || null);
       setDebatePending(null);
+      setFollowupCancelled(null);
       return;
     }
 
@@ -267,10 +272,16 @@ export function useAgentSocket(taskId, restored) {
       role: 'user',
       content: question,
     }]);
+    // 新问题是一个新指令：上一轮留下的"可续跑"状态到此作废
+    setFollowupCancelled(null);
     setDebatePending('红蓝双方正在就你的追问复辩');
 
     try {
       const res = await debateFollowup(taskId, question);
+      if (res?.status === 'cancelled') {
+        setFollowupCancelled(res.message || '已中止本轮追问');
+        return;
+      }
       if (res?.verdict) {
         setAnalysisData(prev => (prev ? { ...prev, verdict: res.verdict } : prev));
       }
@@ -297,6 +308,74 @@ export function useAgentSocket(taskId, restored) {
     }
   }, [taskId, followupStreaming, debatePending]);
 
+  /**
+   * 中止当前这轮追问。
+   *
+   * 只发一个停止标记就返回，不等辩论真的停下来——真正的中断发生在后端下一
+   * 次 LLM 往返之后，由 sendFollowup 那次 await 收到 status=cancelled 来收尾。
+   * 所以这里不能清 debatePending，否则输入框会在辩论还在跑的时候解禁。
+   */
+  const stopFollowup = useCallback(async () => {
+    if (!taskId || debatePending) return;
+    try {
+      await cancelFollowup(taskId);
+    } catch (err) {
+      // 停止请求本身失败（网络抖动等）不改变界面状态：用户会看到辩论继续
+      // 跑完，这比弹一个错又留下一个按了没反应的按钮要好。
+      console.error('中止追问失败', err);
+    }
+  }, [taskId, debatePending]);
+
+  /**
+   * 续跑被中止的那一轮。
+   *
+   * 服务端持有"这一轮进行到哪了"：红方已经说完的不会再问一遍，直接从蓝方或
+   * 裁判接着跑。问题原文也由服务端保留——用户中途改输入框不该影响正在续的
+   * 这一轮，所以这里不传问题。
+   */
+  const resumeFollowup = useCallback(async () => {
+    if (!taskId || followupStreaming || debatePending) return;
+    setDebatePending('正在接着中止处继续复辩');
+    try {
+      const res = await debateFollowup(taskId, '', { resume: true });
+      if (res?.status === 'cancelled') {
+        setFollowupCancelled(res.message || '已中止本轮追问');
+        return;
+      }
+      setFollowupCancelled(null);
+      if (res?.verdict) {
+        setAnalysisData(prev => (prev ? { ...prev, verdict: res.verdict } : prev));
+      }
+      const answered = (res?.turns || []).length;
+      if (answered === 0) {
+        setFollowups(prev => [...prev, {
+          id: `e_${Date.now()}`,
+          role: 'assistant',
+          content: '续跑没有得到任何一方的发言，请检查 LLM 配置后重试。',
+          error: true,
+        }]);
+      }
+    } catch (err) {
+      setFollowupCancelled(null);
+      if (err.name !== 'AbortError') {
+        setFollowups(prev => [...prev, {
+          id: `e_${Date.now()}`,
+          role: 'assistant',
+          content: `续跑失败：${err.message}`,
+          error: true,
+        }]);
+      }
+    } finally {
+      setDebatePending(null);
+    }
+  }, [taskId, followupStreaming, debatePending]);
+
+  /**
+   * 放弃续跑。用户看到"已中止"的提示但不打算继续时，把这条提示收掉——
+   * 否则它会一直挂在输入框上方，而用户其实已经决定换下一个问题了。
+   */
+  const dismissFollowupCancel = useCallback(() => setFollowupCancelled(null), []);
+
   return {
     socket,
     turns,
@@ -308,6 +387,10 @@ export function useAgentSocket(taskId, restored) {
     usage,
     followupStreaming,
     debatePending,
+    followupCancelled,
     sendFollowup,
+    stopFollowup,
+    resumeFollowup,
+    dismissFollowupCancel,
   };
 }

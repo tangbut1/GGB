@@ -1,6 +1,7 @@
 import os
 import re
 import time
+import copy
 import json
 import uuid
 import threading
@@ -21,6 +22,7 @@ from src.knowledge.project_memory import (
     build_memory_context,
 )
 from src.agents.orchestrator import OrchestratorAgent, ROLE_MAP, TURN_LABELS
+from src.model_registry import ModelRegistry, config_override
 
 app = Flask(__name__)
 CORS(app)
@@ -132,6 +134,37 @@ def load_config():
 
 config = load_config()
 
+# config.yaml + 环境变量解析出来的那一份是"部署默认值"，之后不再改动。
+# 用户在设置面板里选模型时改的是 config 本身（Agent 持有的是这些子字典的
+# 引用，就地更新它们才能对已经建好的 Agent 生效），所以必须留一份原件，
+# 否则取消选择后无法还原。
+_BASE_CONFIG = copy.deepcopy(config)
+
+# 用户自配模型。空列表时一切照旧走 config.yaml，面板也不显示"未选择"。
+model_registry = ModelRegistry()
+
+
+def _apply_active_model() -> None:
+    """把当前选用的模型写进每个 Agent 的配置（就地更新）。
+
+    必须在 Agent 构造之前、以及每次选用变化之后调用。BaseAgent 在每次
+    LLM 调用时才读 self.config，所以对已建好的 Agent 就地改字典同样生效——
+    追问用的就是已经建好的那一批。
+
+    不新建子字典而是原地 update：Agent 在 __init__ 里存的是
+    ``agent_config.get("sentiment_agent", {})`` 这个对象的引用，替换掉外层
+    的键值对不会传递进去。
+    """
+    entry = model_registry.get_active()
+    agent_llm = config.get("agent_llm", {})
+    for name, agent_cfg in agent_llm.items():
+        base = _BASE_CONFIG.get("agent_llm", {}).get(name, {})
+        agent_cfg.clear()
+        agent_cfg.update(base)
+        if entry:
+            agent_cfg.update(config_override(entry))
+
+
 # 检测 API Key 配置状态
 def _check_config_status():
     """返回各 Agent 的 API Key 配置状态"""
@@ -148,6 +181,10 @@ def _check_config_status():
 
 config_status = _check_config_status()
 all_configured = all(v["configured"] for v in config_status.values())
+
+# 启动时就让面板里选用的模型生效。不调用的话，用户上次选的模型要等到
+# 第一次点"分析"才起作用，设置面板里显示的状态和实际用的不一致。
+_apply_active_model()
 
 if not all_configured:
     missing = [k for k, v in config_status.items() if not v["configured"]]
@@ -324,6 +361,11 @@ def analyze():
 
     if not keyword:
         return jsonify({"error": "Keyword is required"}), 400
+
+    # 在这一刻把面板里选用的模型落到配置上：Agent 在下面几行才构造，
+    # 读到的一定是用户当前选的那一个。放在请求里而不是只在启动时做一次，
+    # 是为了让"改完模型立刻点分析"这件事可用。
+    _apply_active_model()
 
     # 不能只用 int(time.time())：它的分辨率是 1 秒，同一秒内发起的两次
     # 分析会拿到同一个 task_id，后一个任务覆盖 tasks 里的前一个，两条
@@ -832,12 +874,16 @@ def debate_followup():
     辩论发言不走这个 HTTP 响应回传，而是通过 SocketIO 的 debate_turn /
     forum_message 实时推送（见 OrchestratorAgent.run_followup_debate），
     这样界面能和首轮辩论一样一条条冒出来，而不是等全部跑完一次性刷出。
+
+    请求体带 "resume": true 时是"继续上一轮被中止的追问"：不新开轮次，
+    从上次停下的地方接着跑。已说完的一方不会被再问一次。
     """
     data = request.json or {}
     task_id = data.get('task_id', '')
     question = (data.get('query') or data.get('question') or '').strip()
+    resume = bool(data.get('resume'))
 
-    if not question:
+    if not question and not resume:
         return jsonify({"error": "query is required"}), 400
 
     task = tasks.get(task_id)
@@ -853,12 +899,21 @@ def debate_followup():
         return jsonify({"error": "任务缺少分析上下文，无法追问"}), 500
 
     try:
-        result = orchestrator.run_followup_debate(question)
+        result = orchestrator.run_followup_debate(question, resume=resume)
     except Exception as e:  # noqa: BLE001
         forum_manager = task.get("forum_manager")
         if forum_manager:
             forum_manager.write("SYSTEM", 1, f"追问辩论异常：{e}")
         return jsonify({"error": f"追问辩论失败: {e}"}), 500
+
+    # 用户主动中止不是失败：已经跑出来的发言照样呈现，前端据此显示
+    # "停在这里"和"继续"按钮。这里原样把状态交给前端判断。
+    if result.get("status") == "cancelled":
+        return jsonify({
+            "status": "cancelled",
+            "turns": result.get("turns", []),
+            "message": result.get("message", "已中止本轮追问"),
+        })
 
     if result.get("status") != "success":
         return jsonify({"error": result.get("message", "追问辩论失败")}), 500
@@ -879,13 +934,98 @@ def debate_followup():
     })
 
 
+@app.route('/followup/cancel', methods=['POST'])
+def followup_cancel():
+    """中止当前这轮追问。
+
+    只对"已经在跑"的追问有意义。红蓝复辩是三次串行 LLM 往返，一次几十秒，
+    用户看到方向不对却没有任何办法停下。这里置一个事件位，orchestrator 在
+    每一次 LLM 往返之后检查它——所以中断不是瞬时的，最坏情况要等当前那次
+    请求返回。这点必须让用户知道，否则他会以为按钮坏了。
+
+    任务的最终状态不变（仍是 completed）：中止的是一轮追问，不是那一次分析。
+    """
+    data = request.json or {}
+    task_id = data.get('task_id', '')
+    if not task_id:
+        return jsonify({"error": "task_id is required"}), 400
+
+    task = tasks.get(task_id)
+    if not task:
+        return jsonify({"error": "任务不存在"}), 404
+
+    orchestrator = task.get("orchestrator")
+    if not orchestrator:
+        return jsonify({"error": "任务缺少分析上下文"}), 500
+
+    orchestrator.request_cancel()
+    return jsonify({"status": "cancel_requested", "task_id": task_id})
+
+
 @app.route('/status')
 def api_status():
     """返回各 Agent 的 LLM 配置状态"""
+    # 每次重算而不是用导入时那一份：用户在设置面板里换了模型之后，
+    # 这个接口要能反映当前真正会用的配置，否则面板显示的和实际跑的对不上。
     return jsonify({
-        "agents": config_status,
-        "all_configured": all_configured
+        "agents": _check_config_status(),
+        "all_configured": all(v["configured"] for v in _check_config_status().values()),
+        "active_model_id": model_registry.active_id(),
     })
+
+
+# ── 自配模型 API ───────────────────────────────────────────────────────────
+
+@app.route('/models')
+def api_models():
+    """用户自配模型列表 + 当前选用。
+
+    API Key 只回遮罩值（后 4 位）。完整 Key 只存在于服务端内存和磁盘上的
+    models.json，不出这个接口。
+    """
+    return jsonify({
+        "models": model_registry.list_models(),
+        "active_id": model_registry.active_id(),
+    })
+
+
+@app.route('/models', methods=['POST'])
+def api_models_upsert():
+    """新增或更新一个模型。带 id 为更新，不带为新增。
+
+    更新时 api_key 留空表示不换 Key（前端表单里是遮罩回显，用户没动它就
+    会把一串星号当成新 Key 提交上来）。
+    """
+    payload = request.get_json(silent=True) or {}
+    try:
+        saved = model_registry.upsert(payload)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    _apply_active_model()
+    return jsonify(saved), 201
+
+
+@app.route('/models/<model_id>', methods=['DELETE'])
+def api_models_delete(model_id):
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", model_id):
+        return jsonify({"error": "非法的模型 id"}), 400
+    if not model_registry.delete(model_id):
+        return jsonify({"error": "模型不存在"}), 404
+    _apply_active_model()
+    return jsonify({"deleted": model_id})
+
+
+@app.route('/models/active', methods=['POST'])
+def api_models_set_active():
+    """设置当前选用的模型。传空串表示回到 config.yaml 的默认配置。"""
+    payload = request.get_json(silent=True) or {}
+    model_id = (payload.get("id") or "").strip() or None
+    try:
+        model_registry.set_active(model_id)
+    except ValueError as e:
+        return jsonify({"error": str(e)}), 400
+    _apply_active_model()
+    return jsonify({"active_id": model_registry.active_id()})
 
 @app.route('/history')
 def history():
@@ -943,6 +1083,53 @@ def history_delete(task_id):
     if not removed:
         return jsonify({"error": "Not found"}), 404
     return jsonify({"deleted": task_id})
+
+
+@app.route('/history', methods=['DELETE'])
+def history_clear():
+    """清空全部历史对话。
+
+    跑得多了侧边栏会堆到几百条，逐条点删除不现实。正在分析中的任务不删：
+    它的后台线程还活着，删掉文件后线程跑完会把记录再写回来，留下一个
+    "已删除但状态是 completed"的僵尸。这类任务跳过并如实报告跳过了几个。
+
+    两处都要清：任务记录（task_store）和项目记忆里的会话行。后者是独立一份
+    数据，任务 JSON 被单独删掉之后（测试、早前逐条删过）它还留着，只按
+    task_id 删会漏下这些孤儿会话——/api/projects 照旧把它们返回给前端，
+    用户看到的是"明明清空了，侧栏里还有几十条"。
+    """
+    skipped = []
+    for task_id, task in list(tasks.items()):
+        if task.get("status") in ("running", "pending"):
+            skipped.append(task_id)
+
+    # 从磁盘全量取而不是从 task_history：后者只保留最近 50 条，超过的会
+    # 被静默漏删——用户看到列表空了，目录里却还留着几百个文件。
+    on_disk = [t.get("task_id") for t in task_store.list_all()
+               if t.get("task_id") and t["task_id"] not in skipped]
+
+    removed = 0
+    for task_id in on_disk:
+        if task_store.delete(task_id):
+            removed += 1
+        memory_store.delete_conversation_by_task(task_id)
+
+    # 任务 JSON 已经不在、但项目记忆里还挂着的会话（孤儿）。它们对应的分析
+    # 结果已经无法恢复，占着侧栏位置只会让人以为还能点开。
+    orphaned = memory_store.clear_conversations() - len(on_disk)
+    if orphaned < 0:
+        orphaned = 0
+
+    task_history[:] = [t for t in task_history if t.get("task_id") in skipped]
+    for task_id in on_disk:
+        tasks.pop(task_id, None)
+
+    return jsonify({
+        "deleted": removed,
+        "orphaned": orphaned,
+        "skipped": skipped,
+        "remaining": len(task_history),
+    })
 
 
 def _session_detail(base: dict) -> dict:

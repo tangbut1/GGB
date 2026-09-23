@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import {
   Search, Plus, MessageSquare, Clock, LayoutTemplate, PanelLeftClose,
   Hash, RefreshCw, Inbox, Sparkles, Radar, Sun, Moon, FolderOpen, Brain,
-  RotateCw, ChevronDown, X, Trash2,
+  ChevronDown, X, Trash2, Settings, Eraser,
 } from 'lucide-react';
 import clsx from 'clsx';
 import { useTheme } from '../../theme';
@@ -36,10 +36,11 @@ export default function LeftSidebar({
   onToggle,
   groups,
   onOpenSession,
-  onRerun,
+  onQuickStart,
   onRefreshHistory,
   onNewAnalysis,
   onDeleteSession,
+  onOpenSettings,
   activeTaskId,
 }) {
   // 宽度由 MainLayout 的拖拽把手控制，本组件只负责"展开/收起"两个状态。
@@ -56,7 +57,12 @@ export default function LeftSidebar({
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    if (!q) return list;
+    // 无搜索态：没有对话的组不进列表。项目是按会话分组的单位，一个组里
+    // 一条对话都没有时，渲染出来只是个带 "0" 的空壳——用户刚清空完历史
+    // 就会看到四五个这样的标题挂在"分析记录"底下，以为没删干净。
+    // 项目记忆仍然保留在库里（那是跨会话沉淀的知识，不是某次对话的副本），
+    // 只是不该由历史列表来展示。
+    if (!q) return list.filter(g => (g.conversations || []).length > 0);
     return list
       .map(g => ({
         ...g,
@@ -100,6 +106,14 @@ export default function LeftSidebar({
             className="p-2 rounded-md hover:bg-hover text-text-secondary hover:text-text-main transition-colors"
           >
             {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
+          </button>
+          <button
+            onClick={() => onOpenSettings?.('appearance')}
+            title="设置：主题、字号、历史记录、模型与 API"
+            aria-label="打开设置"
+            className="p-2 rounded-md hover:bg-hover text-text-secondary hover:text-text-main transition-colors"
+          >
+            <Settings size={16} />
           </button>
           <button
             onClick={onToggle}
@@ -156,13 +170,24 @@ export default function LeftSidebar({
                 <span className="text-text-secondary/60 font-normal tabular-nums">{total}</span>
               )}
             </h3>
-            <button
-              onClick={onRefreshHistory}
-              title="刷新记录"
-              className="p-1 rounded hover:bg-hover text-text-secondary hover:text-text-main transition-colors"
-            >
-              <RefreshCw size={12} />
-            </button>
+            <div className="flex items-center gap-0.5">
+              {/* 逐条删除在记录多起来之后不够用，批量管理放在设置面板里——
+                  侧栏只留一个直达入口，不在这里展开第二套勾选界面。 */}
+              <button
+                onClick={() => onOpenSettings?.('history')}
+                title="批量管理 / 清空历史记录"
+                className="p-1 rounded hover:bg-hover text-text-secondary hover:text-text-main transition-colors"
+              >
+                <Eraser size={12} />
+              </button>
+              <button
+                onClick={onRefreshHistory}
+                title="刷新记录"
+                className="p-1 rounded hover:bg-hover text-text-secondary hover:text-text-main transition-colors"
+              >
+                <RefreshCw size={12} />
+              </button>
+            </div>
           </div>
 
           <div className="space-y-1.5">
@@ -181,7 +206,6 @@ export default function LeftSidebar({
                   collapsed={isCollapsed(group.id)}
                   onToggle={() => toggleGroup(group.id)}
                   onOpenSession={onOpenSession}
-                  onRerun={onRerun}
                   onDeleteSession={onDeleteSession}
                   activeTaskId={activeTaskId}
                 />
@@ -198,7 +222,7 @@ export default function LeftSidebar({
             {ANALYSIS_TEMPLATES.map(tpl => (
               <div
                 key={tpl.label}
-                onClick={() => onRerun?.(tpl.label)}
+                onClick={() => onQuickStart?.(tpl.label)}
                 title={tpl.hint}
                 className="group px-3 py-2 rounded-lg cursor-pointer border border-transparent hover:border-border hover:bg-hover transition-colors"
               >
@@ -242,7 +266,7 @@ export default function LeftSidebar({
  * 跨会话记忆的意义就在这一层：第二次分析同一主题时，前一次得出的结论
  * （含"已确认/待验证"状态）会作为背景进入双方视野。
  */
-function ProjectGroup({ group, collapsed, onToggle, onOpenSession, onRerun, onDeleteSession, activeTaskId }) {
+function ProjectGroup({ group, collapsed, onToggle, onOpenSession, onDeleteSession, activeTaskId }) {
   const convs = group.conversations || [];
   return (
     <div className="rounded-lg border border-border bg-soft/40 overflow-hidden">
@@ -281,7 +305,6 @@ function ProjectGroup({ group, collapsed, onToggle, onOpenSession, onRerun, onDe
                 item={c}
                 active={c.taskId === activeTaskId}
                 onClick={() => onOpenSession?.(c.taskId)}
-                onRerun={() => onRerun?.(c.title)}
                 onDelete={() => onDeleteSession?.(c.taskId)}
               />
             ))
@@ -292,11 +315,10 @@ function ProjectGroup({ group, collapsed, onToggle, onOpenSession, onRerun, onDe
   );
 }
 
-function SessionItem({ item, active, onClick, onRerun, onDelete }) {
+function SessionItem({ item, active, onClick, onDelete }) {
   const meta = STATUS_META[item.status] || STATUS_META.completed;
-  // 删除是不可恢复的，且"重新分析"就在旁边——点错的代价很高。
-  // 所以不用 window.confirm（它会打断浏览并禁用页面样式），改成条目内联的
-  // 两步确认：第一次点露出"确认删除"，第二次才真正发请求。
+  // 删除是不可恢复的，确认放在条目内联做两步：第一次点露出"确认删除"，
+  // 第二次才真正发请求。不用 window.confirm——它会中断浏览并禁用页面样式。
   const [confirming, setConfirming] = useState(false);
   const running = item.status === 'running' || item.status === 'waiting';
 
@@ -335,21 +357,12 @@ function SessionItem({ item, active, onClick, onRerun, onDelete }) {
           <Clock size={9} /> {item.time || '--:--'}
         </span>
         {item.date && <span className="opacity-60">{item.date}</span>}
-        {/* 重新分析是次级操作，默认不占位：点条目本身是"打开那一次对话"，
-            重新采集只会拿到另一批数据，必须是用户主动选择。 */}
-        <button
-          onClick={(e) => { e.stopPropagation(); onRerun?.(); }}
-          title="重新采集并分析（会得到新数据）"
-          className="ml-auto flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity text-accent hover:text-accent-strong"
-        >
-          <RotateCw size={9} /> 重新分析
-        </button>
         {confirming ? (
           <>
             <button
               onClick={handleDelete}
               title="确认删除，不可恢复"
-              className="flex items-center gap-1 text-danger hover:text-danger/80 font-medium"
+              className="ml-auto flex items-center gap-1 text-danger hover:text-danger/80 font-medium"
             >
               <Trash2 size={9} /> 确认删除
             </button>
@@ -367,7 +380,7 @@ function SessionItem({ item, active, onClick, onRerun, onDelete }) {
             disabled={running}
             title={running ? '分析进行中，暂不能删除' : '删除这条对话（含原始数据）'}
             className={clsx(
-              "flex items-center gap-1 transition-opacity",
+              "ml-auto flex items-center gap-1 transition-opacity",
               running
                 ? "opacity-30 cursor-not-allowed"
                 : "opacity-0 group-hover:opacity-100 hover:text-danger"

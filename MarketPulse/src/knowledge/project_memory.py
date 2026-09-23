@@ -324,6 +324,42 @@ class ProjectMemoryStore:
             conn.commit()
             return True
 
+    def clear_conversations(self) -> int:
+        """清空全部会话与发言原文，返回删掉的会话数。
+
+        存在的理由：任务记录（task_store）和项目记忆里的会话行是两份数据，
+        前者可以被单独删掉——测试跑完、或者用户早前逐条删过——后者还留着。
+        这时候按 task_id 逐条删就漏下了这些"孤儿会话"，而 /api/projects 会把
+        它们当成历史对话返回给前端，用户看到的是"我明明清空了，侧栏里还有
+        57 条"。
+
+        项目级的 memories 不动：那是跨会话提炼的知识，不是某一次对话的
+        副本，清历史记录不该把用户长期积累的结论一起清掉。
+
+        但**既没有会话也没有记忆的项目要删**。那种项目是纯空壳——多半来自
+        一次失败的分析（ensure_project 已经建了行，会话却没写进来），或者
+        就是上一轮清理漏下的。留着它，/api/projects 仍然会把它返回给前端，
+        侧栏"分析记录"底下就挂着一个点开是"暂无对话"的空标题，用户会以为
+        删除没生效。有记忆的项目即使会话清零也保留：它装的是用户攒下的结论。
+        """
+        with self._lock:
+            conn = self._conn()
+            before = conn.execute(
+                "SELECT COUNT(*) FROM conversations").fetchone()[0]
+            conn.execute("DELETE FROM messages")
+            conn.execute("DELETE FROM conversations")
+            # 子查询而不是先 SELECT 再删：两张表都在同一把锁里，但一条语句
+            # 让"判断空"和"删除空"之间没有窗口，也不会出现漏删。
+            conn.execute(
+                "DELETE FROM projects WHERE NOT EXISTS ("
+                "  SELECT 1 FROM conversations c WHERE c.project_id = projects.project_id"
+                ") AND NOT EXISTS ("
+                "  SELECT 1 FROM project_memories m WHERE m.project_id = projects.project_id"
+                ")"
+            )
+            conn.commit()
+            return before
+
     # ── 发言原文 ────────────────────────────────────────────────────────────
 
     def append_message(

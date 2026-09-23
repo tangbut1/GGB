@@ -65,6 +65,77 @@ export function useTheme() {
   return { theme, setTheme, toggleTheme };
 }
 
+// ── 字号 ────────────────────────────────────────────────────────────────────
+
+export const FONT_SCALE_STORAGE_KEY = 'ggb-font-scale';
+
+/**
+ * 字号档位，单位是 html 的 font-size（px）。
+ *
+ * 走根字号而不是给每个组件加一档 class：Tailwind 的 text-*、间距、圆角
+ * 全部以 rem 为单位，改根字号就等于整站等比缩放，这正是"字号调节"该有的
+ * 效果——长文阅读时要的是正文和留白一起变大，只有字变大、行距还是原来那样
+ * 反而更挤。档位上限收到 20px：再往上 4K 以下的窗口里辩论卡片会开始折行。
+ *
+ * 默认 16px 是浏览器原值，保持现状不引入"打开就变了"的观感落差。
+ */
+export const FONT_SCALES = [
+  { id: 'sm', label: '小', px: 14, hint: '一屏看更多内容' },
+  { id: 'md', label: '默认', px: 16, hint: '浏览器默认字号' },
+  { id: 'lg', label: '大', px: 18, hint: '长时间阅读更省力' },
+  { id: 'xl', label: '特大', px: 20, hint: '投影或远距离观看' },
+];
+
+const DEFAULT_SCALE = 'md';
+
+function readScale() {
+  if (typeof document === 'undefined') return DEFAULT_SCALE;
+  const attr = document.documentElement.dataset.fontScale;
+  return FONT_SCALES.some(s => s.id === attr) ? attr : DEFAULT_SCALE;
+}
+
+function applyScale(id) {
+  const entry = FONT_SCALES.find(s => s.id === id) || FONT_SCALES[1];
+  if (typeof document === 'undefined') return;
+  document.documentElement.style.fontSize = `${entry.px}px`;
+  document.documentElement.dataset.fontScale = entry.id;
+  try {
+    localStorage.setItem(FONT_SCALE_STORAGE_KEY, entry.id);
+  } catch {
+    // 隐私模式下 localStorage 会抛异常，字号照样要能切
+  }
+}
+
+/** 在首个客户端渲染前同步执行，避免刷新时先按默认字号布局再跳。 */
+export function initFontScale() {
+  let saved = null;
+  try {
+    saved = localStorage.getItem(FONT_SCALE_STORAGE_KEY);
+  } catch {
+    saved = null;
+  }
+  applyScale(FONT_SCALES.some(s => s.id === saved) ? saved : DEFAULT_SCALE);
+}
+
+export function useFontScale() {
+  const [scale, setScaleState] = useState(readScale);
+
+  useEffect(() => {
+    const sync = () => setScaleState(readScale());
+    window.addEventListener('fontscalechange', sync);
+    return () => window.removeEventListener('fontscalechange', sync);
+  }, []);
+
+  const setScale = useCallback((next) => {
+    if (!FONT_SCALES.some(s => s.id === next)) return;
+    applyScale(next);
+    window.dispatchEvent(new Event('fontscalechange'));
+  }, []);
+
+  const meta = FONT_SCALES.find(s => s.id === scale) || FONT_SCALES[1];
+  return { scale, setScale, meta };
+}
+
 // JS 侧沿用驼峰键（C.tooltipBg），CSS 变量是 kebab-case（--c-tooltip-bg）。
 // 两张名字必须显式对上：CSS 自定义属性大小写敏感，拼错不报错，只会
 // getPropertyValue 拿到空字符串，图表颜色静默失效。

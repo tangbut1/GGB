@@ -3,8 +3,13 @@ import { PanelLeftOpen, PanelRightOpen } from 'lucide-react';
 import LeftSidebar from '../LeftSidebar/LeftSidebar';
 import CenterWorkspace from '../CenterWorkspace/CenterWorkspace';
 import RightInsightPanel from '../RightInsightPanel/RightInsightPanel';
+import SettingsPanel from '../Settings/SettingsPanel';
 import { useAgentSocket } from '../../hooks/useAgentSocket';
-import { analyzeKeyword, fetchHistory, fetchProjects, fetchTaskDetail, deleteTask } from '../../services/api';
+import { useModels } from '../../hooks/useModels';
+import {
+  analyzeKeyword, fetchHistory, fetchProjects, fetchTaskDetail,
+  deleteTask, clearHistory,
+} from '../../services/api';
 import DepthSelector, { useAnalysisDepth, resolveDepth } from '../CenterWorkspace/DepthSelector';
 
 // 侧栏宽度的取值范围。下限要能容纳图标 + 主按钮，上限按视口比例算，
@@ -139,10 +144,27 @@ export default function MainLayout() {
   // 后端全量流水线每次都完整跑，这一档只影响呈现，不影响计算。
   const { depth, setDepth, meta: depthMeta } = useAnalysisDepth();
 
+  // 用户自配模型。和设置面板共用一份状态（见 useModels），这里只负责把
+  // 当前选用项喂给对话框里的选择器。
+  const {
+    models, activeId: activeModelId, loading: modelsLoading, error: modelsError,
+    activate: activateModel, save: saveModel, remove: deleteModel,
+  } = useModels();
+
+  // 设置面板。initialSection 让"对话框里点管理模型"能直接跳到模型页，
+  // 而不是先把用户扔到外观页再让他自己找。
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsSection, setSettingsSection] = useState('appearance');
+  const openSettings = useCallback((section = 'appearance') => {
+    setSettingsSection(section);
+    setSettingsOpen(true);
+  }, []);
+
   // Socket hook
   const {
     turns, followups, status, systemState, progress,
-    analysisData, followupStreaming, debatePending, sendFollowup,
+    analysisData, followupStreaming, debatePending, followupCancelled,
+    sendFollowup, stopFollowup, resumeFollowup, dismissFollowupCancel,
   } = useAgentSocket(currentTaskId, restored);
 
   const loadHistory = useCallback(async () => {
@@ -181,8 +203,10 @@ export default function MainLayout() {
   }, [loadGroups]);
 
   /**
-   * 打开一场历史对话。和"重新分析"是两件事：点历史记录要看的是**那一次**
-   * 采集到的数据和双方发言，重新采集只会拿到另一批数据。
+   * 打开一场历史对话。
+   *
+   * 点历史记录要看的是**那一次**采集到的数据和双方发言。所以这里没有"重新
+   * 分析"——重新采集只会拿到另一批数据，那不是用户点这条记录时想要的东西。
    */
   const openSession = useCallback(async (taskId) => {
     if (!taskId) return;
@@ -257,6 +281,24 @@ export default function MainLayout() {
     setActiveTab('trend');
   }, []);
 
+  /**
+   * 清空全部历史对话。
+   *
+   * 后端会跳过仍在分析中的任务并在返回值里报告跳过了几个——所以不能假设
+   * "成功了列表就空了"，跳过的那些要如实告诉用户。
+   */
+  const handleClearAll = useCallback(async () => {
+    const res = await clearHistory();
+    setHistory([]);
+    setGroups([]);
+    // 当前正在看的这场也被清掉了，主区必须立刻复位，否则界面留着一份
+    // 已经不存在的数据。
+    setRestored(null);
+    setCurrentTaskId(null);
+    setCurrentQuery('');
+    return res;
+  }, []);
+
   // 换深度时把右栏切到该档的默认 Tab。用户选了"深度审计"却还停在核心指标
   // 上，等于这一档没生效——切过去才是"我会拿到什么"的即时反馈。
   const handleDepthChange = useCallback((next) => {
@@ -276,10 +318,11 @@ export default function MainLayout() {
               onToggle={() => setLeftCollapsed(true)}
               groups={groups}
               onOpenSession={openSession}
-              onRerun={handleStartAnalysis}
+              onQuickStart={handleStartAnalysis}
               onRefreshHistory={() => { loadHistory(); loadGroups(); }}
               onNewAnalysis={handleNewAnalysis}
               onDeleteSession={handleDeleteSession}
+              onOpenSettings={() => openSettings('appearance')}
               activeTaskId={currentTaskId}
             />
           </div>
@@ -310,6 +353,9 @@ export default function MainLayout() {
           onSelectAgent={(type) => setActiveTab(type)}
           onStartAnalysis={handleStartAnalysis}
           onSendFollowup={handleSendFollowup}
+          onStopFollowup={stopFollowup}
+          onResumeFollowup={resumeFollowup}
+          onDismissFollowupCancel={dismissFollowupCancel}
           turns={turns}
           followups={followups}
           status={status}
@@ -319,10 +365,16 @@ export default function MainLayout() {
           taskId={currentTaskId}
           followupStreaming={followupStreaming}
           debatePending={debatePending}
+          followupCancelled={followupCancelled}
           restored={Boolean(restored)}
           analysisData={analysisData}
           depth={depth}
+          depthMeta={depthMeta}
           onDepthChange={handleDepthChange}
+          models={models}
+          activeModelId={activeModelId}
+          onActivateModel={activateModel}
+          onManageModels={() => openSettings('models')}
         />
       </div>
 
@@ -358,6 +410,22 @@ export default function MainLayout() {
           <PanelRightOpen size={14} />
         </button>
       )}
+
+      <SettingsPanel
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        initialSection={settingsSection}
+        groups={groups}
+        onDeleteSession={handleDeleteSession}
+        onClearAll={handleClearAll}
+        models={models}
+        activeId={activeModelId}
+        modelsLoading={modelsLoading}
+        modelsError={modelsError}
+        onActivateModel={activateModel}
+        onSaveModel={saveModel}
+        onDeleteModel={deleteModel}
+      />
     </div>
   );
 }

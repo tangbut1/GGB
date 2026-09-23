@@ -15,6 +15,7 @@ consumes them and keeps the legacy blocking return contract for the Flask
 layer, translating events into SocketIO emissions.
 """
 
+import threading
 import time
 from typing import Dict, Any, Optional
 
@@ -95,6 +96,27 @@ class OrchestratorAgent:
         self.news_data: list = []
         self.analyzed_news: list = []
         self.collect_meta: Dict[str, Any] = {}
+
+        # 追问中断。红蓝复辩是三次串行 LLM 往返（红→蓝→裁判），长 prompt 下
+        # 一次就要几十秒，用户看到方向不对却只能干等。这里放一个事件位，
+        # 每一步 LLM 往返之后检查一次——不能更细，因为 requests.post 是阻塞
+        # 的，中断最快也只能在一轮调用返回后生效。
+        # 首轮分析不用它：流水线中途停下会留下一个没写终态的任务，
+        # 比让它跑完更麻烦。
+        self._cancel_event = threading.Event()
+        # 追问续跑现场。中断时保留"这一轮进行到哪了"，用户点"继续"时据此
+        # 跳过已经说完的一方，而不是把整轮重跑一遍。
+        self._followup_state: Optional[Dict[str, Any]] = None
+
+    def request_cancel(self) -> None:
+        """请求中止当前这轮追问。幂等，可重复调用。"""
+        self._cancel_event.set()
+
+    def clear_cancel(self) -> None:
+        self._cancel_event.clear()
+
+    def _cancelled(self) -> bool:
+        return self._cancel_event.is_set()
 
     # ── socket helpers ───────────────────────────────────────────────
     def _emit(self, event: str, data: dict):
@@ -336,7 +358,8 @@ class OrchestratorAgent:
         )
 
     # ── helpers ──────────────────────────────────────────────────────
-    def run_followup_debate(self, question: str) -> Dict[str, Any]:
+    def run_followup_debate(self, question: str,
+                            resume: bool = False) -> Dict[str, Any]:
         """围绕用户的追问再跑一轮红蓝辩论。
 
         与首轮的区别：不再采集数据（沿用首轮的语料），红蓝双方都拿到
@@ -345,16 +368,46 @@ class OrchestratorAgent:
 
         返回 {"status": "success", "turns": [...], "verdict": {...}}；
         任何一方失声都不算失败——用已有的发言继续，保证追问一定有回音。
+
+        用户点了"停止"时返回 {"status": "cancelled", "turns": [...已产出的...]}。
+        已产出的发言照样返回：中断不是失败，那两段话是真跑出来的，前端要
+        能显示"停在这里"，并且据此提供"继续"。
+
+        停止请求是一次性的：被某一轮响应过就消费掉。所以"点了停止又发新
+        问题"能正常跑起来，不会永远停在停止状态。
+
+        ``resume=True`` 是那个"继续"：不新开轮次，接着上一次中断的地方往下
+        跑——红方已经说过的就不再问一遍，直接从蓝方或裁判开始。问过的问题
+        也不重新写进论坛日志，否则记录里会出现两条相同的"用户追问"。
         """
         question = (question or "").strip()
+
+        state = self._followup_state
+        if resume and state:
+            # 续跑：轮次、问题、以及每一方是否已经发言，全部沿用上一次的
+            # 现场。前端只传 resume 标记，问题从服务端现场取——用户在中途
+            # 改输入框里的话不应该影响正在续的那一轮。
+            rnd = state["round"]
+            question = question or state["question"]
+        else:
+            if not question:
+                return {"status": "error", "message": "追问内容为空"}
+            self.followup_round += 1
+            rnd = self.followup_round
+            state = {
+                "round": rnd,
+                "question": question,
+                "red_done": False,
+                "blue_done": False,
+            }
+            self._followup_state = state
+            self.forum_manager.write("SYSTEM", rnd, f"用户追问：{question}")
+
         if not question:
             return {"status": "error", "message": "追问内容为空"}
         if not self.news_data:
             return {"status": "error", "message": "首轮分析未采集到数据，无法追问"}
 
-        self.followup_round += 1
-        rnd = self.followup_round
-        self.forum_manager.write("SYSTEM", rnd, f"用户追问：{question}")
         self._emit("agent_update", {"agent": "SentimentAgent", "status": "active",
                                     "progress": 74, "round": rnd})
 
@@ -367,19 +420,49 @@ class OrchestratorAgent:
 
         turns: list = []
 
+        def _cancelled() -> Dict[str, Any]:
+            """中断收尾：把已产出的发言交出去，并留一条论坛记录。
+
+            这里要把停止请求消费掉（clear）。停止是一次性的指令：被这一轮
+            响应过了，就不能继续挂在那里等着把用户的下一个问题也拦掉——
+            用户点完停止又发新问题，是在下新指令。放在这里而不是入口处
+            clear，是因为入口无法区分"上一轮遗留的停止"和"这一轮刚开始用户
+            就点了停止"；由响应方自己消费，两者都不会丢。
+            """
+            self._cancel_event.clear()
+            self.forum_manager.write(
+                "SYSTEM", rnd,
+                f"用户中止了本轮追问（已完成 {len(turns)} 段发言）")
+            self._emit("agent_update", {"agent": "HOST", "status": "done",
+                                        "progress": 100, "round": rnd})
+            return {"status": "cancelled", "turns": turns,
+                    "message": "已中止本轮追问"}
+
+        if self._cancelled():
+            return _cancelled()
+
         # ── 红方回应追问 ──
-        self.sentiment_agent.iteration_count = rnd
-        red_feedback = self._build_rebuttal_feedback(
-            guidance=f"用户追问：{question}",
-            opponent_label="蓝方",
-            opponent_text=self.debate.get("blue_round2") or self.debate.get("blue_round1", ""),
-        )
-        if prior_verdict:
-            red_feedback = f"{prior_verdict}\n\n{red_feedback}"
-        red_res = self.sentiment_agent.run({"news": self.news_data, "feedback": red_feedback})
-        red_text = self._latest_speech("SentimentAgent")
-        if red_res.get("status") == "success" and red_text:
-            self.debate["red_round2"] = red_text
+        if state["red_done"]:
+            # 续跑且红方上一轮已经说完：直接取回那段发言，不再问一次模型。
+            red_text = self.debate.get("red_round2", "")
+        else:
+            self.sentiment_agent.iteration_count = rnd
+            red_feedback = self._build_rebuttal_feedback(
+                guidance=f"用户追问：{question}",
+                opponent_label="蓝方",
+                opponent_text=self.debate.get("blue_round2") or self.debate.get("blue_round1", ""),
+            )
+            if prior_verdict:
+                red_feedback = f"{prior_verdict}\n\n{red_feedback}"
+            red_res = self.sentiment_agent.run({"news": self.news_data, "feedback": red_feedback})
+            red_text = self._latest_speech("SentimentAgent")
+            if red_res.get("status") == "success" and red_text:
+                self.debate["red_round2"] = red_text
+                state["red_done"] = True
+            else:
+                self.forum_manager.write("SYSTEM", rnd, "红方本轮未发言（模型不可用或返回异常）")
+
+        if red_text:
             turn = {
                 "author": "SentimentAgent", "role": "red", "round": rnd,
                 "content": red_text,
@@ -389,28 +472,37 @@ class OrchestratorAgent:
             # (author, round, content) 去重，两路并发不会渲染出两张卡片。
             self._emit("debate_turn", {**turn, "type": "AGENT",
                                        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")})
-        else:
-            self.forum_manager.write("SYSTEM", rnd, "红方本轮未发言（模型不可用或返回异常）")
+
+        if self._cancelled():
+            return _cancelled()
 
         # ── 蓝方回应追问 ──
-        self._emit("agent_update", {"agent": "TrendAgent", "status": "active",
-                                    "progress": 82, "round": rnd})
-        self.trend_agent.iteration_count = rnd
-        blue_feedback = self._build_rebuttal_feedback(
-            guidance=f"用户追问：{question}",
-            opponent_label="红方",
-            opponent_text=self.debate.get("red_round2") or self.debate.get("red_round1", ""),
-        )
-        if prior_verdict:
-            blue_feedback = f"{prior_verdict}\n\n{blue_feedback}"
-        blue_res = self.trend_agent.run({
-            "analyzed_news": self.analyzed_news or self.news_data,
-            "feedback": blue_feedback,
-            "collect_meta": self.collect_meta,
-        })
-        blue_text = self._latest_speech("TrendAgent")
-        if blue_res.get("status") == "success" and blue_text:
-            self.debate["blue_round2"] = blue_text
+        if state["blue_done"]:
+            blue_text = self.debate.get("blue_round2", "")
+        else:
+            self._emit("agent_update", {"agent": "TrendAgent", "status": "active",
+                                        "progress": 82, "round": rnd})
+            self.trend_agent.iteration_count = rnd
+            blue_feedback = self._build_rebuttal_feedback(
+                guidance=f"用户追问：{question}",
+                opponent_label="红方",
+                opponent_text=self.debate.get("red_round2") or self.debate.get("red_round1", ""),
+            )
+            if prior_verdict:
+                blue_feedback = f"{prior_verdict}\n\n{blue_feedback}"
+            blue_res = self.trend_agent.run({
+                "analyzed_news": self.analyzed_news or self.news_data,
+                "feedback": blue_feedback,
+                "collect_meta": self.collect_meta,
+            })
+            blue_text = self._latest_speech("TrendAgent")
+            if blue_res.get("status") == "success" and blue_text:
+                self.debate["blue_round2"] = blue_text
+                state["blue_done"] = True
+            else:
+                self.forum_manager.write("SYSTEM", rnd, "蓝方本轮未发言（模型不可用或返回异常）")
+
+        if blue_text:
             turn = {
                 "author": "TrendAgent", "role": "blue", "round": rnd,
                 "content": blue_text,
@@ -418,8 +510,9 @@ class OrchestratorAgent:
             turns.append(turn)
             self._emit("debate_turn", {**turn, "type": "AGENT",
                                        "timestamp": time.strftime("%Y-%m-%d %H:%M:%S")})
-        else:
-            self.forum_manager.write("SYSTEM", rnd, "蓝方本轮未发言（模型不可用或返回异常）")
+
+        if self._cancelled():
+            return _cancelled()
 
         if not turns:
             return {
@@ -453,6 +546,12 @@ class OrchestratorAgent:
         self._emit("agent_update", {"agent": "HOST", "status": "done",
                                     "progress": 100, "round": rnd})
 
+        # 这一轮已经完整跑完，续跑现场要清掉：留着的话用户下一个追问会
+        # 带着 resume 语义回来，把上一轮已经说完的话再"续"一遍。
+        self._followup_state = None
+        # 裁判是最后一步，停止请求可能在这一步之后才到——那种停止已经
+        # 没有可停的东西了。消费掉，别让它把用户的下一个问题拦掉。
+        self._cancel_event.clear()
         return {"status": "success", "turns": turns, "verdict": new_verdict}
 
     @staticmethod

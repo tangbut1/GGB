@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Share, Download, MessageSquare, Bot, AlertTriangle, TrendingUp, Send, CheckCircle2, ChevronRight, Gavel, Database, FileText, User, Sparkles } from 'lucide-react';
+import { Share, Download, MessageSquare, Bot, AlertTriangle, TrendingUp, Send, CheckCircle2, ChevronRight, Gavel, Database, FileText, User, Sparkles, Square, Play, X } from 'lucide-react';
 import clsx from 'clsx';
 import VerdictCard from './VerdictCard';
 import AnalysisProcess from './AnalysisProcess';
 import DepthSelector, { resolveDepth } from './DepthSelector';
+import ModelSelector from './ModelSelector';
 
 // 角色 → 卡片样式（与后端 ROLE_MAP 对应）
 const ROLE_STYLES = {
@@ -54,10 +55,21 @@ const ROLE_STYLES = {
   },
 };
 
+// 追问建议。只在已有会话且空闲时出现——它是"接下来可以问什么"的提示，
+// 不是常驻 UI。空会话时显示这些会让用户以为系统已经在分析某个事件了。
+const SUGGESTIONS = [
+  '红方观点是否成立？',
+  '蓝方的数据依据是什么？',
+  '综合双方论据给出结论',
+];
+
 export default function CenterWorkspace({
   onSelectAgent,
   onStartAnalysis,
   onSendFollowup,
+  onStopFollowup,
+  onResumeFollowup,
+  onDismissFollowupCancel,
   turns,
   followups,
   status,
@@ -67,10 +79,16 @@ export default function CenterWorkspace({
   taskId,
   followupStreaming,
   debatePending,
+  followupCancelled,
   restored,
   analysisData,
   depth,
+  depthMeta,
   onDepthChange,
+  models,
+  activeModelId,
+  onActivateModel,
+  onManageModels,
 }) {
   const [inputValue, setInputValue] = useState('');
   const scrollRef = useRef(null);
@@ -79,6 +97,9 @@ export default function CenterWorkspace({
   // 追问是一场完整的红蓝复辩：从发出问题到裁判给出新终裁，输入框必须锁住。
   // 不锁的话用户会在辩论中途再发一条，两轮发言交错，"第 N 轮"就串了。
   const busy = isAnalyzing || Boolean(debatePending);
+  // 只有追问辩论能中途停下：首轮流水线是一条长链（采集 → 两轮辩论 → 终裁），
+  // 后端没有为它埋中断点，此时显示停止按钮等于给一个按了没反应的控件。
+  const canStop = Boolean(debatePending);
   const hasSession = Boolean(currentQuery);
 
   // 研判卡由后端从实测指标算出，是这一屏的主视图。拿不到就退回聊天流——
@@ -88,7 +109,7 @@ export default function CenterWorkspace({
   // 新内容到达时自动滚动到底部
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
-  }, [turns.length, followups.length, systemState, debatePending]);
+  }, [turns.length, followups.length, systemState, debatePending, followupCancelled]);
 
   const handleSend = () => {
     const text = inputValue.trim();
@@ -115,35 +136,25 @@ export default function CenterWorkspace({
       : hasSession ? '继续追问，红蓝双方将基于已采集的数据复辩...' : '输入你的分析目标，开始红蓝辩论...';
 
   return (
-    <div className="flex-1 flex flex-col h-full overflow-hidden relative">
-      <div className="h-14 border-b border-border/50 flex items-center justify-between px-6 shrink-0 bg-app/80 backdrop-blur-sm z-10">
-        <div className="flex items-center gap-4">
-          <h1 className="font-semibold text-text-main truncate max-w-sm">
-            {currentQuery || '新的分析会话'}
-          </h1>
-          {hasSession && (
-            <span className="text-[11px] text-text-secondary bg-soft px-2 py-1 rounded-full border border-border">
-              {restored ? '历史对话' : verdictCard ? '态势研判 · 裁判终裁' : '红蓝辩论 · 裁判终裁'}
-            </span>
-          )}
-          {/* 回放历史时"重新分析"必须是显式动作：点左侧记录要看的是那一次
-              的原始结论，重新采集只会得到另一批数据。 */}
-          {restored && hasSession && (
-            <button
-              onClick={() => onStartAnalysis(currentQuery)}
-              disabled={busy}
-              title="用同样的关键词重新采集并分析"
-              className="text-[11px] text-accent hover:text-accent-strong disabled:opacity-50 bg-accent/10 hover:bg-accent/15 px-2.5 py-1 rounded-full border border-accent/25 transition-colors"
-            >
-              重新分析
-            </button>
-          )}
-        </div>
-        <div className="flex items-center gap-3">
+    <div className="flex-1 flex flex-col h-full overflow-hidden">
+      {/* 顶栏：标题 + 查看深度。深度选择器放在这里而不是输入框上方——
+          它管的是"结果展开到哪一层"，属于视图开关，放在输入区只会和输入
+          框抢空间，还会在内容滚动时被顶到正文上面去。 */}
+      <div className="h-14 shrink-0 border-b border-border/50 flex items-center gap-3 px-6 bg-app/80 backdrop-blur-sm z-10">
+        <h1 className="font-semibold text-text-main truncate min-w-0 flex-1">
+          {currentQuery || '新的分析会话'}
+        </h1>
+        {hasSession && (
+          <span className="text-[11px] text-text-secondary bg-soft px-2 py-1 rounded-full border border-border shrink-0">
+            {restored ? '历史对话' : verdictCard ? '态势研判 · 裁判终裁' : '红蓝辩论 · 裁判终裁'}
+          </span>
+        )}
+        <div className="flex items-center gap-2 shrink-0">
           {isAnalyzing && (
             <span className="text-[11px] text-text-secondary tabular-nums">{progress}%</span>
           )}
-          <div className="w-px h-4 bg-border mx-2" />
+          <DepthSelector depth={depth} onChange={onDepthChange} />
+          <div className="w-px h-4 bg-border" />
           <button
             onClick={() => onSelectAgent('evidence')}
             title="查看证据流"
@@ -166,7 +177,10 @@ export default function CenterWorkspace({
         </div>
       </div>
 
-      <div ref={scrollRef} className="flex-1 overflow-y-auto px-6 py-6 pb-32 custom-scrollbar">
+      {/* 滚动区。输入区是下面的普通流内元素（不再是绝对定位浮层），
+          所以这里不需要留一大块 padding-bottom 去躲它——之前正是那个
+          "猜高度"的 padding 和浮层实际高度对不上，才把正文压在输入框下面。 */}
+      <div ref={scrollRef} className="flex-1 overflow-y-auto px-6 py-6 custom-scrollbar">
         {/* mx-auto 是关键：左右侧栏折叠后这一列会跟着变宽，没有 mx-auto 时
             内容死贴左边缘，看着像页面塌了半边。 */}
         <div className="max-w-4xl mx-auto space-y-5">
@@ -238,50 +252,102 @@ export default function CenterWorkspace({
         </div>
       </div>
 
-      <div className="absolute bottom-0 left-0 w-full p-6 bg-gradient-to-t from-app via-app to-transparent pt-12 pointer-events-none">
-        <div className="max-w-4xl mx-auto pointer-events-auto">
-            <div className="flex justify-between items-center px-2 mb-2">
-              <div className="flex gap-2">
-                {['红方观点是否成立？', '蓝方的数据依据是什么？', '综合双方论据给出结论'].map(tag => (
-                  <span
-                    key={tag}
-                    onClick={() => !busy && setInputValue(prev => prev + tag + ' ')}
-                    className="text-[11px] text-text-secondary hover:text-text-main cursor-pointer bg-soft px-2 py-1 rounded-md border border-border"
-                  >
-                    {tag}
-                  </span>
-                ))}
-              </div>
-              <DepthSelector depth={depth} onChange={onDepthChange} />
-            </div>
+      {/* 输入区。它是 flex 列里的 shrink-0 兄弟，高度由内容决定，
+          永远不遮挡正文——这是这次布局修复的关键。 */}
+      <div className="shrink-0 border-t border-border/50 bg-app px-6 py-3">
+        <div className="max-w-4xl mx-auto space-y-2">
 
-          <div className="bg-sidebar border border-border rounded-input shadow-lg flex flex-col p-2 focus-within:border-border/80 focus-within:ring-1 focus-within:ring-border/50 transition-all relative">
+          {/* 续跑条：上一轮追问被中止后出现。"继续"会让红蓝双方接着中止处
+              往下说——服务端记着这一轮进行到哪了，已经说完的一方不会再问一遍，
+              所以上下文是连续的，不是把整轮重跑。 */}
+          {followupCancelled && !busy && (
+            <div className="flex items-center gap-2 flex-wrap rounded-lg border border-warning/30 bg-warning/10 px-3 py-2">
+              <AlertTriangle size={13} className="text-warning shrink-0" />
+              <span className="text-[11px] text-text-main flex-1 min-w-0">
+                本轮追问已中止。已产生的发言保留在上方，可以接着继续。
+              </span>
+              <button
+                onClick={onResumeFollowup}
+                className="text-[11px] px-2.5 py-1 rounded-lg bg-accent hover:bg-accent-strong text-on-accent flex items-center gap-1 transition-colors shrink-0"
+              >
+                <Play size={11} /> 继续回答
+              </button>
+              <button
+                onClick={onDismissFollowupCancel}
+                title="放弃续跑，换个别的问题"
+                className="p-1 rounded-md text-text-secondary hover:text-text-main shrink-0"
+              >
+                <X size={12} />
+              </button>
+            </div>
+          )}
+
+          {/* 追问建议。空闲且有会话时才出现。 */}
+          {hasSession && !busy && !followupCancelled && (
+            <div className="flex flex-wrap gap-1.5">
+              {SUGGESTIONS.map(tag => (
+                <button
+                  key={tag}
+                  type="button"
+                  onClick={() => setInputValue(prev => prev + tag + ' ')}
+                  className="text-[11px] text-text-secondary hover:text-text-main bg-soft hover:bg-hover px-2 py-1 rounded-md border border-border transition-colors"
+                >
+                  {tag}
+                </button>
+              ))}
+            </div>
+          )}
+
+          <div className="bg-sidebar border border-border rounded-input shadow-sm flex items-end gap-2 p-2 focus-within:border-accent/40 transition-colors">
             <textarea
               value={inputValue}
               onChange={(e) => setInputValue(e.target.value)}
               onKeyDown={handleKeyDown}
-              className="w-full bg-transparent border-none resize-none text-sm p-2 outline-none text-text-main placeholder-text-secondary/50 min-h-[60px]"
+              rows={2}
+              className="flex-1 min-w-0 bg-transparent border-none resize-none text-sm p-1.5 outline-none text-text-main placeholder-text-secondary/50"
               placeholder={placeholder}
               disabled={busy}
             />
-            <div className="flex justify-between items-center px-2 pb-1">
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-text-secondary bg-soft px-2 py-0.5 rounded-md">
-                  {hasSession ? '基于已采集数据复辩' : '红蓝辩论模式'}
-                </span>
-              </div>
-              <button
-                onClick={handleSend}
-                disabled={busy || !inputValue.trim() || followupStreaming}
-                className="bg-accent hover:bg-accent-strong disabled:bg-accent/50 disabled:cursor-not-allowed text-on-accent p-2 rounded-lg transition-colors"
-              >
-                <Send size={16} className="ml-0.5" />
-              </button>
+            <div className="flex items-center gap-2 shrink-0 pb-0.5">
+              <ModelSelector
+                models={models}
+                activeId={activeModelId}
+                onActivate={onActivateModel}
+                onManage={onManageModels}
+              />
+              {canStop ? (
+                <button
+                  onClick={onStopFollowup}
+                  title="中止本轮追问（已产生的发言会保留，可继续）"
+                  className="bg-danger hover:bg-danger/90 text-white p-2 rounded-lg transition-colors flex items-center gap-1"
+                >
+                  <Square size={14} className="fill-current" />
+                </button>
+              ) : (
+                <button
+                  onClick={handleSend}
+                  disabled={busy || !inputValue.trim() || followupStreaming}
+                  title={isAnalyzing ? '正在分析中' : '发送'}
+                  className="bg-accent hover:bg-accent-strong disabled:bg-accent/50 disabled:cursor-not-allowed text-on-accent p-2 rounded-lg transition-colors"
+                >
+                  <Send size={16} className="ml-0.5" />
+                </button>
+              )}
             </div>
           </div>
+
+          <div className="flex items-center justify-between gap-3 px-1">
+            <span className="text-[11px] text-text-secondary truncate">
+              {hasSession ? '追问基于已采集的数据复辩，不重新采集' : '红蓝辩论模式 · 多源采集 + 结构化终裁'}
+            </span>
+            <span className="text-[11px] text-text-secondary shrink-0 hidden sm:block" title={depthMeta?.detail}>
+              {depthMeta?.label}
+            </span>
+          </div>
+
           {restored && (
-            <p className="text-[11px] text-text-secondary mt-2 px-2 leading-relaxed">
-              正在回放历史对话。追问需要该任务仍在本次服务运行中；后端重启后请点顶部的「重新分析」。
+            <p className="text-[11px] text-text-secondary px-1 leading-relaxed">
+              正在回放历史对话。追问需要该任务仍在本次服务运行中；后端重启后请新建一次分析。
             </p>
           )}
         </div>

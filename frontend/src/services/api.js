@@ -67,6 +67,78 @@ export async function deleteTask(taskId) {
   return response.json();
 }
 
+/**
+ * 清空全部历史对话。
+ *
+ * 后端会跳过仍在分析中的任务（它的后台线程还活着，删了会被写回来）并如实
+ * 报告跳过了几个——所以这里不能假设"返回成功就等于列表空了"，调用方要把
+ * skipped 显示给用户。
+ */
+export async function clearHistory() {
+  const response = await fetch('/api/history', { method: 'DELETE' });
+  if (!response.ok) {
+    await readError(response, '清空历史记录失败');
+  }
+  return response.json(); // { deleted, skipped, remaining }
+}
+
+// ── 自配模型 ────────────────────────────────────────────────────────────────
+
+/**
+ * 取模型列表与当前选用项。
+ *
+ * 返回的 api_key 是遮罩值（后 4 位）。完整 Key 不出这个接口，所以编辑表单里
+ * 用户没改动 Key 时要原样提交遮罩串，后端会据此判断"不换 Key"。
+ */
+export async function fetchModels() {
+  const response = await fetch('/api/models');
+  if (!response.ok) {
+    await readError(response, '模型列表加载失败');
+  }
+  return response.json(); // { models: [...], active_id }
+}
+
+/** 新增（不带 id）或更新（带 id）一个模型。 */
+export async function saveModel(payload) {
+  const response = await fetch('/api/models', {
+    method: 'POST',
+    headers: JSON_HEADERS,
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    await readError(response, '保存模型失败');
+  }
+  return response.json();
+}
+
+export async function deleteModel(modelId) {
+  const response = await fetch(`/api/models/${encodeURIComponent(modelId)}`, {
+    method: 'DELETE',
+  });
+  if (!response.ok) {
+    await readError(response, '删除模型失败');
+  }
+  return response.json();
+}
+
+/**
+ * 切换当前选用的模型。传 null 表示回到 config.yaml 的默认配置。
+ *
+ * 换的是"下一次分析用哪个模型"：已经构造好的 Agent 会在下次调用时读到新
+ * 配置，所以不必重启后端。
+ */
+export async function setActiveModel(modelId) {
+  const response = await fetch('/api/models/active', {
+    method: 'POST',
+    headers: JSON_HEADERS,
+    body: JSON.stringify({ id: modelId || '' }),
+  });
+  if (!response.ok) {
+    await readError(response, '切换模型失败');
+  }
+  return response.json();
+}
+
 /** 项目列表（跨会话记忆的分组单位），每项附带会话摘要。 */
 export async function fetchProjects() {
   const response = await fetch('/api/projects');
@@ -184,12 +256,15 @@ export async function sendFollowup(taskId, message) {
  * 与 streamFollowup 的区别：这里会让红蓝双方就追问各自复辩、裁判再出补充
  * 裁定。发言通过 SocketIO 的 debate_turn / forum_message 实时推到房间，
  * 这个 HTTP 响应只用来告知"这一轮辩论跑完了"以及最终的补充裁定。
+ *
+ * ``resume=True`` 是"继续"：接着上一次被中止的轮次往下跑，红方已经说完的
+ * 就不再问一遍。问题文本由服务端的续跑现场持有，前端传空即可。
  */
-export async function debateFollowup(taskId, message) {
+export async function debateFollowup(taskId, message, { resume = false } = {}) {
   const response = await fetch('/api/debate_followup', {
     method: 'POST',
     headers: JSON_HEADERS,
-    body: JSON.stringify({ task_id: taskId, query: message }),
+    body: JSON.stringify({ task_id: taskId, query: message, resume }),
   });
 
   if (!response.ok) {
@@ -197,4 +272,22 @@ export async function debateFollowup(taskId, message) {
   }
 
   return response.json(); // { status, turns, verdict }
+}
+
+/**
+ * 中止当前这轮追问。
+ *
+ * 中断不是瞬时的：orchestrator 在每一次 LLM 往返之后才检查停止标记，最坏
+ * 情况要等当前那次请求返回。已经跑出来的发言会随下一次响应交回前端。
+ */
+export async function cancelFollowup(taskId) {
+  const response = await fetch('/api/followup/cancel', {
+    method: 'POST',
+    headers: JSON_HEADERS,
+    body: JSON.stringify({ task_id: taskId }),
+  });
+  if (!response.ok) {
+    await readError(response, '中止追问失败');
+  }
+  return response.json();
 }

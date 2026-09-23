@@ -18,7 +18,9 @@ class TaskStore:
     def __init__(self, store_dir: str = _DEFAULT_DIR) -> None:
         self.store_dir = Path(store_dir)
         self.store_dir.mkdir(parents=True, exist_ok=True)
-        self._lock = threading.Lock()
+        # 可重入锁：update_stats 要在一次持锁内完成"读-改-写"，而 _read /
+        # _write 各自也会取同一把锁。用 Lock 会让它自己把自己锁死。
+        self._lock = threading.RLock()
 
     # ── write ────────────────────────────────────────────────────────────────
 
@@ -51,6 +53,39 @@ class TaskStore:
             entry["updated_at"] = _now()
             self._write(task_id, entry)
 
+    # ── payload（完整分析结果） ────────────────────────────────────────────
+
+    def save_payload(self, task_id: str, payload: dict) -> None:
+        """把一次分析的完整结果落到 <store_dir>/payload/<task_id>.json。
+
+        任务 JSON 本身只存状态与统计，是为了让 list_recent 能廉价地扫目录。
+        完整 analysis_data 有几百 KB（analyzed_news 一家几十条），混在里面
+        会让侧边栏每次加载都把整个 results 目录读进内存。
+
+        没有这份文件，点击历史记录就只能重新采集一遍——而重新采集拿到的
+        是另一批数据，已经不是"那次分析"了。
+        """
+        payload_dir = self.store_dir / "payload"
+        payload_dir.mkdir(parents=True, exist_ok=True)
+        path = payload_dir / f"{self._safe_stem(task_id)}.json"
+        tmp = path.with_suffix(".json.tmp")
+        with self._lock:
+            tmp.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+            os.replace(tmp, path)
+
+    def load_payload(self, task_id: str) -> dict | None:
+        path = self.store_dir / "payload" / f"{self._safe_stem(task_id)}.json"
+        if not path.exists():
+            return None
+        try:
+            with self._lock:
+                return json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return None
+
+    def has_payload(self, task_id: str) -> bool:
+        return (self.store_dir / "payload" / f"{self._safe_stem(task_id)}.json").exists()
+
     # ── read ─────────────────────────────────────────────────────────────────
 
     def get(self, task_id: str) -> Dict[str, Any] | None:
@@ -76,9 +111,12 @@ class TaskStore:
 
     # ── internals ────────────────────────────────────────────────────────────
 
+    def _safe_stem(self, task_id: str) -> str:
+        """task_id 可能来自 URL 路径段，先剥掉目录分隔与上级引用再当文件名。"""
+        return task_id.replace("/", "_").replace("\\", "_").replace("..", "_")
+
     def _path(self, task_id: str) -> Path:
-        safe = task_id.replace("/", "_").replace("..", "_")
-        return self.store_dir / f"{safe}.json"
+        return self.store_dir / f"{self._safe_stem(task_id)}.json"
 
     def _read(self, task_id: str) -> Dict[str, Any] | None:
         path = self._path(task_id)

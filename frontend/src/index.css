@@ -2,15 +2,121 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+  现代工程风配色（参考 Linear / Vercel / Zed / Raycast）：
+  以 Slate 灰阶为基底，Teal 松石绿为唯一点缀色，明暗两套都不用纯黑纯白。
+
+  刻意不做的事：
+    - 不用纯黑 #000 / 纯白 #fff —— 对比度过高，长对话读下来刺眼
+    - 不铺大面积渐变 —— 用 1px 边框和极轻的表面色差分区域
+    - 点缀色低饱和 —— Teal 在暗色下有一点微光，但不做 glow
+
+  区域层级靠"面"不靠"边框"：画布 → 侧栏 → 面板 → 卡片，一级亮一级。
+  亮色模式下三层表面都是白色，这时才靠 border + 极淡的填充拉开差别。
+
+  token 名与旧的阶跃星辰版保持一致，组件 className 一行都不用改；
+  tailwind.config.js 把这些名字指向这里的变量，换肤只改这一处。
+
+  ── 为什么实色写成 "R G B" 三通道而不是十六进制 ──
+  Tailwind v3 只能对它能解析的色值施加不透明度修饰符。写成
+  `rgb(var(--c-accent) / <alpha-value>)` 后，`bg-accent` 和
+  `bg-accent/10` 才能分别展开成 alpha=1 和 alpha=0.1；直接写
+  `#14B8A6` 时，带 `/10` 的类会被 Tailwind 静默丢弃——不报错，
+  但徽章底色、半透明边框、置灰文字会全部失效。所以这里凡是会被
+  加不透明度的实色一律用三通道；本身就是半透明的叠加色（hover、
+  soft、grid 等）继续用 rgba()，它们只以原样使用。
+*/
+
+:root {
+  /* 暗色（默认） */
+  --c-bg: 11 15 23;
+  --c-sidebar: 17 24 39;
+  --c-panel: 19 28 43;
+  --c-card: 24 34 49;
+  --c-border: 30 41 59;
+  --c-border-strong: 44 58 79;
+  /* hover / 选中 / 极轻填充：透明度叠加在不同底色上都成立 */
+  --c-hover: rgba(148, 163, 184, 0.08);
+  --c-active: rgba(148, 163, 184, 0.14);
+  --c-soft: rgba(148, 163, 184, 0.05);
+  --c-text: 241 245 249;
+  --c-text-muted: 148 163 184;
+  /* 唯一点缀色：Teal 400。暗底下微微发亮，但不做 glow */
+  --c-accent: 20 184 166;
+  --c-accent-strong: 45 212 191;
+  --c-accent-soft: rgba(20, 184, 166, 0.14);
+  --c-accent-line: rgba(20, 184, 166, 0.38);
+  --c-on-accent: 4 33 29;
+  --c-success: 52 211 153;
+  --c-warning: 251 191 36;
+  --c-danger: 248 113 113;
+  /* 情感分析里的"中性"档。和 muted 文本同色，但语义独立，图表要用 */
+  --c-neutral: 148 163 184;
+  /* 红蓝辩论三方身份色：红 / 蓝 / 裁判。低饱和，不当霓虹用 */
+  --c-red: 248 113 113;
+  --c-blue: 96 165 250;
+  --c-judge: 251 191 36;
+  /* Chart.js canvas 专用（class 在 canvas 里不生效） */
+  --c-axis: 148 163 184;
+  --c-grid: rgba(30, 41, 59, 0.9);
+  --c-tooltip-bg: 19 28 43;
+  --c-tooltip-border: 44 58 79;
+  --c-tooltip-title: 241 245 249;
+  --c-tooltip-body: 148 163 184;
+  color-scheme: dark;
+}
+
+[data-theme='light'] {
+  --c-bg: 248 250 252;
+  --c-sidebar: 255 255 255;
+  --c-panel: 255 255 255;
+  --c-card: 255 255 255;
+  --c-border: 226 232 240;
+  --c-border-strong: 203 213 225;
+  --c-hover: rgba(15, 23, 42, 0.04);
+  --c-active: rgba(15, 23, 42, 0.07);
+  --c-soft: rgba(15, 23, 42, 0.025);
+  --c-text: 15 23 42;
+  --c-text-muted: 100 116 139;
+  /* Teal 600：比暗色版深一档，白底上才够对比度 */
+  --c-accent: 13 148 136;
+  --c-accent-strong: 15 118 110;
+  --c-accent-soft: rgba(13, 148, 136, 0.10);
+  --c-accent-line: rgba(13, 148, 136, 0.35);
+  --c-on-accent: 255 255 255;
+  --c-success: 5 150 105;
+  --c-warning: 217 119 6;
+  --c-danger: 220 38 38;
+  --c-neutral: 100 116 139;
+  --c-red: 220 38 38;
+  --c-blue: 37 99 235;
+  --c-judge: 180 83 9;
+  --c-axis: 100 116 139;
+  --c-grid: rgba(226, 232, 240, 0.9);
+  /* 亮色下 tooltip 用深色浮层，文字反而更清楚 */
+  --c-tooltip-bg: 15 23 42;
+  --c-tooltip-border: 30 41 59;
+  --c-tooltip-title: 241 245 249;
+  --c-tooltip-body: 203 213 225;
+  color-scheme: light;
+}
+
 @layer base {
   body {
     @apply bg-app text-text-main font-sans antialiased overflow-hidden;
     margin: 0;
     padding: 0;
+    /* 主题切换时颜色平滑过渡，但不要拖慢交互反馈 */
+    transition: background-color 150ms ease, color 150ms ease;
+  }
+
+  ::selection {
+    background: var(--c-accent-soft);
+    color: rgb(var(--c-text));
   }
 }
 
-/* Custom Scrollbar for dark theme */
+/* Custom Scrollbar — 6px 细条，跟着主题走 */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
@@ -19,8 +125,43 @@
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  @apply bg-border rounded-full;
+  background: rgb(var(--c-border-strong));
+  border-radius: 9999px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  @apply bg-text-secondary;
+  background: rgb(var(--c-accent));
+}
+
+/* 侧栏拖拽把手。1px 命中区太小，鼠标很难抓；用 5px 宽的透明热区 + 中间
+   一条 1px 实线，hover 时线条变强调色，拖动时变成 2px，给出可拖的反馈。 */
+.resize-handle {
+  position: relative;
+  width: 5px;
+  margin: 0 -2px;
+  cursor: col-resize;
+  flex-shrink: 0;
+  z-index: 20;
+  touch-action: none;
+}
+.resize-handle::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 2px;
+  width: 1px;
+  background: rgb(var(--c-border));
+  transition: background-color 120ms ease, width 120ms ease;
+}
+.resize-handle:hover::after,
+.resize-handle[data-dragging='true']::after {
+  background: rgb(var(--c-accent));
+  width: 2px;
+}
+/* 拖动中整个界面进入"调宽"模式：禁用文本选择，否则鼠标划过中间
+   的辩论正文会把字选成蓝底，看起来像出了 bug。 */
+body.is-resizing,
+body.is-resizing * {
+  user-select: none !important;
+  cursor: col-resize !important;
 }

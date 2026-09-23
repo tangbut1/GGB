@@ -1,6 +1,7 @@
 from typing import Dict, Any
 from .base_agent import BaseAgent
 from ..analysis.trend_prediction import TrendPredictor
+from ..analysis.sentiment_indicators import compute_indicators
 
 class TrendAgent(BaseAgent):
     def _get_system_prompt(self) -> str:
@@ -60,6 +61,11 @@ class TrendAgent(BaseAgent):
         )
         if feedback:
             llm_prompt += f"【主持人指引及红方观点】{feedback}\n"
+        # 跨会话项目记忆：与 sentiment_agent 同一约定，作为背景而非指令，
+        # 历史结论与本次数据冲突时以本次为准。
+        memory_context = input_data.get("memory_context")
+        if memory_context:
+            llm_prompt += f"\n{memory_context}\n"
         llm_prompt += (
             "请按以下结构输出你的理性对冲分析：\n"
             "1. 【蓝方立论】情绪噪音剥离（指出当前市场的过度恐慌或不合理之处）\n"
@@ -68,14 +74,66 @@ class TrendAgent(BaseAgent):
         )
 
         insight = self.call_llm(llm_prompt)
+        degraded = self.llm_unavailable(insight)
 
-        if insight and "Error" not in insight:
-            self.write_to_forum_log(insight)
+        # LLM 不可用时不能沉默：蓝方失声会让裁判只听到红方一面之词，
+        # 辩论退化成单方陈述。用本地时序模型的结果合成蓝方立论。
+        if degraded:
+            direction_text = {
+                "positive": "积极上行", "negative": "消极下行", "neutral": "震荡持平",
+            }.get(direction, direction)
+            lines = [
+                f"【蓝方立论】本地趋势模型结论：情绪走向{direction_text}，"
+                f"模型置信度 {confidence:.0%}，预测窗口 {forecast_window} 天，"
+                f"有效预测点 {predictions_count} 个。",
+                f"【数据底座】共 {total_count} 条数据、{source_count} 个来源，"
+                f"时间跨度 {date_range}，数据质量评级：{data_quality}。",
+                f"【理性判断】红方的恐慌需要与历史基线对照："
+                f"{trend_summary.get('recommendation', '建议保持观望')}。",
+            ]
+
+            # 第二轮必须点名回应红方，否则两轮立论一字不差，辩论名不副实。
+            # limit 直接按展示长度给：引文超长时 extract_opponent_claim 会
+            # 按句末截断，这里再切一次就会把词断在半中间。
+            opponent = self.extract_opponent_claim(feedback, limit=90)
+            if opponent:
+                lines.append(
+                    f"【驳斥红方】红方以负面样本的绝对数量立论，但趋势模型看的是走向而非存量："
+                    f"在 {forecast_window} 天预测窗口内情绪走向为{direction_text}、"
+                    f"置信度 {confidence:.0%}。对方引用的“{opponent}”"
+                    "把历史存量当成未来风险，属于用后视镜开车。"
+                )
+
+            lines.append("（裁判 LLM 暂不可用，本立论由本地模型生成）")
+            insight = "\n".join(lines)
+        self.write_to_forum_log(insight)
 
         # 注入增强后的元信息
         trend_summary["data_quality"] = data_quality
         trend_summary["data_note"] = data_note
         trend_summary["forecast_window"] = forecast_window
+        # 模型类型与观测点数要能透传到前端的方法论说明里：Prophet 失败时
+        # 后端会自动降级成线性回归基线，两者的置信区间含义完全不同
+        # （Prophet 是不确定性区间，基线是残差 ±1.96σ），界面必须说清楚
+        # 用的是哪一个，否则用户会把基线的区间当成 Prophet 的不确定性。
+        trend_summary.setdefault("model_type", "unknown")
+        trend_summary.setdefault("data_points", total_count)
+        # Prophet 拟合失败时把真实原因带出去。后端降级到线性基线本身是
+        # 设计内的兜底，但"为什么降级"必须可查——否则用户看着趋势图
+        # 无从判断该修环境还是该接受这个精度。
+        if trend_summary.get("model_type") == "baseline":
+            trend_summary["fallback_reason"] = predictor.fit_error or "未知原因"
+        else:
+            trend_summary["fallback_reason"] = ""
+
+        # 多维指标：单条情绪指数无法评价一次舆情（同样的均值可能来自
+        # "少量极端负面"或"温和全面偏负"）。全部由本批已打分样本算出，
+        # 不引入任何外部基准或插值。
+        indicators = compute_indicators(analyzed_news)
+        trend_summary["indicators"] = indicators
+        # 时序预测的最低门槛：至少 2 个有日期的不同日期。少于这个数时
+        # "未来 30 天"没有任何依据，前端要说明是横截面快照而不是预测。
+        trend_summary["forecast_feasible"] = indicators["sample"]["known_days"] >= 2
 
         return {
             "status": "success",
@@ -85,6 +143,9 @@ class TrendAgent(BaseAgent):
                 "trend_summary": trend_summary,
                 "collect_meta": collect_meta,
             },
-            "summary": insight if ("Error" not in insight and insight) else f"趋势预测完成，方向 {direction}（数据质量: {data_quality}）"
+            "summary": (
+                f"趋势预测完成，方向 {direction}（数据质量: {data_quality}）"
+                if degraded else insight
+            )
         }
 

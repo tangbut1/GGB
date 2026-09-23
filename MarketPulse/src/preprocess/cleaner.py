@@ -3,6 +3,8 @@ import jieba
 from typing import List, Dict, Any
 import json
 
+from ..net_safety import safe_write_path
+
 
 class DataCleaner:
     """数据清洗器 - 处理新闻文本数据"""
@@ -37,9 +39,7 @@ class DataCleaner:
         text = re.sub(r'[^\u4e00-\u9fa5a-zA-Z0-9\s.,!?;:\-()]', ' ', text)
         text = re.sub(r'\s+', ' ', text)
         
-        # 3. 不再删除英文内容，支持中英文混合
-        # 只去除过短的数字序列（如单个数字）
-        text = re.sub(r'\b\d{1,2}\b', '', text)
+        # 3. 数字必须保留：型号/版本号（iPhone 15、小米 14）是舆情判断的关键信息
         
         # 4. 对于中文内容，去除停用词
         if re.search(r'[\u4e00-\u9fa5]', text):  # 如果包含中文
@@ -136,11 +136,13 @@ class DataCleaner:
             cleaned_news: 清洗后的新闻数据
             file_path: 保存路径
         """
-        import os
-        os.makedirs(os.path.dirname(file_path), exist_ok=True)
-        
-        with open(file_path, 'w', encoding='utf-8') as f:
-            json.dump(cleaned_news, f, ensure_ascii=False, indent=2)
+        # file_path 只往 safe_write_path 里流：先校验再派生目录，避免
+        # "上游传什么就用什么"拼出一条没把过关的路径。
+        target = safe_write_path(file_path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(
+            json.dumps(cleaned_news, ensure_ascii=False, indent=2),
+            encoding='utf-8')
         
         print(f"✅ 已保存 {len(cleaned_news)} 条清洗后的新闻到 {file_path}")
 

@@ -50,20 +50,28 @@ class CollectAgent(BaseAgent):
                 f"用差异化关键词启动补充采集..."
             )
             now = _dt.datetime.now()
-            # 差异化搜索词：换表述 + 换时间窗口，不走同一批数据
+            # 差异化搜索词：换表述 + 换时间窗口，不走同一批数据。
+            # 月份取 4、5 个月前——主采集的展开词已经覆盖了 1-3 个月前，
+            # 这里再搜一遍只会拿回同一批稿子，白烧预算。用 timedelta 算真实
+            # 日期而不是对月份取模：模运算在 1 月会算出"当年 12 月"，
+            # 而那个 12 月其实属于上一年。
+            month_terms = []
+            for months_back in [4, 5]:
+                d = now - _dt.timedelta(days=months_back * 30)
+                month_terms.append(f"{keyword} {d.year}年{d.month}月")
             supplement_terms = [
                 f"{keyword} 报道",
                 f"{keyword} 分析",
-            ]
-            for m in [1, 2]:
-                supplement_terms.append(
-                    f"{keyword} {now.year}年{(now.month - m - 1) % 12 + 1}月"
-                )
+            ] + month_terms
             net_added = 0
             for term in supplement_terms:
                 if len(raw_news) >= min_results:
                     break
-                batch = collector.run_custom_search(term, max_results=40)
+                # expand_auxiliary=False：这些词本身就是"展开词"，
+                # 让 collector 再展开一次会产出"宁德时代 报道 2026年8月"
+                # 这类拼接废词，把一次补充放大成 4×5 次查询。
+                batch = collector.run_custom_search(
+                    term, max_results=40, expand_auxiliary=False)
                 new_in_batch = 0
                 for n in batch:
                     url = n.get("link", "")
@@ -124,6 +132,16 @@ class CollectAgent(BaseAgent):
         total_count = len(all_data)
         source_count = len(set(n.get("source", "") for n in all_data))
         date_range = self._compute_date_range(all_data)
+        # 信源层级分布：情绪占比的解释力取决于样本是谁说的，采集元信息里
+        # 必须带上各级别占比，前端才能如实说明"这个正面率是哪些信源说的"。
+        try:
+            from ..collect.source_registry import annotate as _annotate_sources
+            from ..collect.source_registry import tier_distribution as _tier_dist
+            all_data = _annotate_sources(all_data)
+            tier_dist = _tier_dist(all_data)
+        except Exception as e:  # noqa: BLE001
+            self.write_to_forum_log(f"信源分级失败（不影响主流程）: {e}")
+            tier_dist = {}
         sample_texts = [f"标题:{n.get('title')} 摘要:{n.get('summary')}" for n in all_data[:15]]
 
         llm_prompt = (
@@ -157,6 +175,7 @@ class CollectAgent(BaseAgent):
                     "source_count": source_count,
                     "date_range": date_range,
                     "src_mode": src_mode,
+                    "tier_distribution": tier_dist,
                 }
             },
             "summary": (

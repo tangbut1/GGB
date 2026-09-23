@@ -3,14 +3,19 @@ import threading
 from pathlib import Path
 from datetime import datetime
 
+from ..net_safety import safe_output_path
+
 class LogManager:
     def __init__(self, task_id: str, log_dir: str = None):
         self.task_id = task_id
         self.log_dir = log_dir or str(Path(__file__).parent.parent.parent / "logs")
-        self.log_file = os.path.join(self.log_dir, f"forum_{task_id}.log")
+        # task_id 由调用方给出，拼进文件名这一步不能靠"上游恰好安全"来保证。
+        # 以 log_dir 为基准收敛：分量含分隔符、是绝对路径或拼完越界，一律拒绝。
+        self.log_file = str(safe_output_path(self.log_dir, f"forum_{task_id}.log"))
         self.lock = threading.Lock()
         self.latest_host_msg = ""
         self.messages = []  # Structured message history
+        self.monitor = None
         self.usage_stats = {
             "prompt_tokens": 0,
             "completion_tokens": 0,
@@ -21,12 +26,17 @@ class LogManager:
         
         os.makedirs(self.log_dir, exist_ok=True)
         # 确保初始为空
-        with open(self.log_file, "w", encoding="utf-8") as f:
-            f.write(f"--- Forum Log Started for Task: {task_id} ---\n")
+        Path(self.log_file).write_text(
+            f"--- Forum Log Started for Task: {task_id} ---\n",
+            encoding="utf-8")
             
+    def set_monitor(self, monitor) -> None:
+        """Attach the ForumMonitor so writes can notify it (event-driven)."""
+        self.monitor = monitor
+
     def write(self, agent_name: str, iteration: int, content: str):
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        
+
         # Append to structured memory
         msg_obj = {
             "timestamp": timestamp,
@@ -34,17 +44,24 @@ class LogManager:
             "round": iteration,
             "content": content
         }
-        
+
         with self.lock:
             self.messages.append(msg_obj)
-            
+
             # Still write to flat log file for debugging
             log_line = f"[{timestamp}] [{agent_name}] [Round {iteration}] {content}\n"
             with open(self.log_file, "a", encoding="utf-8") as f:
                 f.write(log_line)
-                
+
             if agent_name == "HOST":
                 self.latest_host_msg = content
+
+        # 锁外通知，避免与 monitor 的锁顺序互锁
+        if self.monitor is not None:
+            try:
+                self.monitor.on_message_written()
+            except Exception:
+                pass
 
     def get_all_messages(self) -> list:
         """返回所有结构化消息"""

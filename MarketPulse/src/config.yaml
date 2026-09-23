@@ -7,28 +7,53 @@ data:
   processed_dir: "data/processed"
   results_dir: "results"
 
+# 每个 agent 的 timeout / max_retries 单独配。BaseAgent._call_llm_inner 按
+# 这两个值发请求（4xx 不重试，超时/5xx/429 退避重试），写死一个 60 秒会让
+# 长 prompt 的调用间歇性超时——症状是"LLM 校正没生效"这种看不出原因的降级。
+# 推理型模型生成一篇危机研判或一份 HTML 报告很容易超过 60 秒，所以放宽。
 agent_llm:
   collect_agent:
     base_url: "https://api.deepseek.com/v1"
     api_key: "${MP_COLLECT_AGENT_API_KEY}"
     model: "deepseek-v4-flash"
+    timeout: 90
+    max_retries: 2
   sentiment_agent:
     base_url: "https://api.deepseek.com/v1"
     api_key: "${MP_SENTIMENT_AGENT_API_KEY}"
     model: "deepseek-v4-flash"
+    timeout: 180
+    max_retries: 2
   trend_agent:
     base_url: "https://api.deepseek.com/v1"
     api_key: "${MP_TREND_AGENT_API_KEY}"
     model: "deepseek-v4-flash"
+    timeout: 120
+    max_retries: 2
   report_agent:
     base_url: "https://api.deepseek.com/v1"
     api_key: "${MP_REPORT_AGENT_API_KEY}"
     model: "deepseek-v4-flash"
+    timeout: 180
+    max_retries: 2
   forum_host:
     base_url: "https://api.deepseek.com/v1"
     api_key: "${MP_FORUM_HOST_API_KEY}"
     model: "deepseek-v4-flash"
+    timeout: 180
+    max_retries: 2
     trigger_threshold: 5
+  # 阶跃星辰 StepFun Agent：负责红蓝辩论之外的独立深度研判——追问的
+  # 上下文补全、以及（可选的）终裁第二意见。单独一个 agent_llm 条目，
+  # 就能用 MP_STEPFUN_AGENT_* 环境变量整体替换，不影响上面五个 agent。
+  # step-5-preview 支持长上下文与 reasoning_effort，适合读完整论坛记录。
+  stepfun_agent:
+    base_url: "https://api.stepfun.com/v1"
+    api_key: "${MP_STEPFUN_AGENT_API_KEY}"
+    model: "step-5-preview"
+    temperature: 0.3
+    timeout: 180
+    max_retries: 2
 
 analysis:
   use_prophet: true

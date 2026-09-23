@@ -1,147 +1,331 @@
-import React from 'react';
-import { Search, Plus, MessageSquare, Clock, Star, LayoutTemplate, ChevronLeft, ChevronRight, Hash, Filter } from 'lucide-react';
+import React, { useMemo, useState } from 'react';
+import {
+  Search, Plus, MessageSquare, Clock, LayoutTemplate, PanelLeftClose,
+  Hash, RefreshCw, Inbox, Sparkles, Radar, Sun, Moon, FolderOpen, Brain,
+  RotateCw, ChevronDown, X,
+} from 'lucide-react';
 import clsx from 'clsx';
+import { useTheme } from '../../theme';
 
-export default function LeftSidebar({ collapsed, onToggle }) {
+const STATUS_META = {
+  running: { dot: 'bg-accent', label: '分析中' },
+  completed: { dot: 'bg-success', label: '已完成' },
+  error: { dot: 'bg-danger', label: '失败' },
+  waiting: { dot: 'bg-warning', label: '等待中' },
+};
+
+// 分析模板带一句说明：光有"舆情总览"四个字，用户不知道点下去会发生什么
+// （会不会真的去采集？跑多久？）。说明写清楚它触发的是同一套红蓝辩论流水线。
+const ANALYSIS_TEMPLATES = [
+  { label: '舆情总览', hint: '全量采集 + 红蓝辩论 + 结构化终裁' },
+  { label: '传播路径分析', hint: '侧重信源层级与时间扩散' },
+  { label: '争议点提取', hint: '裁判重点梳理红蓝分歧' },
+  { label: '风险预警', hint: '红方危机视角优先' },
+];
+
+const CAPABILITIES = [
+  ['多源实时采集', 'Google News / DDG / Bing 三层回退'],
+  ['信源可信度分级', 'T1 权威 → T4 待核验，分层统计'],
+  ['情绪建模', 'SnowNLP 初判 + 大模型校正'],
+  ['趋势预测', 'Prophet 时序 + 数据质量评级'],
+  ['红蓝辩论终裁', '红方看空 / 蓝方理性 / 裁判裁定'],
+];
+
+export default function LeftSidebar({
+  collapsed,
+  onToggle,
+  groups,
+  onOpenSession,
+  onRerun,
+  onRefreshHistory,
+  onNewAnalysis,
+  activeTaskId,
+}) {
+  // 宽度由 MainLayout 的拖拽把手控制，本组件只负责"展开/收起"两个状态。
+  // 收起时父组件直接不渲染本组件（改用一条竖排展开按钮），所以这里
+  // 正常路径一定是展开态，不需要再写一套窄态布局。
+  const { theme, toggleTheme } = useTheme();
+  const [query, setQuery] = useState('');
+  // 项目默认全部展开（多数用户只跟踪一两个主题），可手动折叠。
+  // 搜索态下强制展开，否则用户搜完还要逐个点开项目。
+  const [collapsedGroups, setCollapsedGroups] = useState(() => new Set());
+
+  const list = Array.isArray(groups) ? groups : [];
+  const total = list.reduce((n, g) => n + (g.conversations?.length || 0), 0);
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return list;
+    return list
+      .map(g => ({
+        ...g,
+        conversations: (g.conversations || []).filter(c =>
+          `${c.title || ''} ${c.summary || ''}`.toLowerCase().includes(q)
+        ),
+      }))
+      .filter(g => (g.conversations || []).length > 0 || (g.name || '').toLowerCase().includes(q));
+  }, [list, query]);
+
+  const toggleGroup = (id) => {
+    setCollapsedGroups(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  // 搜索态下全部展开，否则用户搜完还要逐个点开项目
+  const isCollapsed = (id) => query.trim() ? false : collapsedGroups.has(id);
+
   return (
-    <div className={clsx(
-      "h-full bg-sidebar border-r border-border flex flex-col transition-all duration-180 ease-in-out shrink-0",
-      collapsed ? "w-[72px]" : "w-[280px]"
-    )}>
-      {/* Brand & Search */}
-      <div className="h-14 flex items-center justify-between px-4 shrink-0 border-b border-border/50">
-        {!collapsed && <span className="font-bold text-lg tracking-wider text-text-main">GGB</span>}
-        <button className="p-2 rounded-md hover:bg-white/5 text-text-secondary hover:text-text-main transition-colors mx-auto">
-          <Search size={18} />
-        </button>
+    <div className="h-full bg-sidebar border-r border-border flex flex-col overflow-hidden">
+      <div className="h-14 flex items-center justify-between px-4 shrink-0 border-b border-border">
+        <div className="flex items-center gap-2.5 min-w-0">
+          {/* 纯色标记，不用渐变：工程工具的品牌位是一个符号而不是一张海报 */}
+          <span className="w-7 h-7 rounded-lg bg-accent flex items-center justify-center shrink-0">
+            <Radar size={15} className="text-on-accent" />
+          </span>
+          <div className="min-w-0">
+            <div className="font-bold text-sm tracking-widest text-text-main leading-none">GGB</div>
+            <div className="text-[10px] text-text-secondary leading-none mt-1 truncate">红蓝辩论舆情研判</div>
+          </div>
+        </div>
+        <div className="flex items-center gap-1 shrink-0">
+          <button
+            onClick={toggleTheme}
+            title={theme === 'dark' ? '切换到亮色主题' : '切换到暗色主题'}
+            aria-label="切换明暗主题"
+            className="p-2 rounded-md hover:bg-hover text-text-secondary hover:text-text-main transition-colors"
+          >
+            {theme === 'dark' ? <Sun size={16} /> : <Moon size={16} />}
+          </button>
+          <button
+            onClick={onToggle}
+            title="收起左侧栏（可拖回）"
+            className="p-2 rounded-md hover:bg-hover text-text-secondary hover:text-text-main transition-colors"
+          >
+            <PanelLeftClose size={16} />
+          </button>
+        </div>
       </div>
 
-      {/* New Analysis Button */}
-      <div className="p-4 shrink-0">
-        <button className={clsx(
-          "w-full flex items-center justify-center gap-2 bg-accent hover:bg-accent/90 text-white rounded-md transition-colors",
-          collapsed ? "p-3" : "px-4 py-3"
-        )}>
-          <Plus size={18} />
-          {!collapsed && <span className="font-medium">新建分析</span>}
+      <div className="px-4 pt-4 pb-3 shrink-0">
+        <button
+          onClick={onNewAnalysis}
+          className="w-full flex items-center justify-center gap-2 bg-accent hover:bg-accent-strong active:bg-accent-strong text-on-accent rounded-lg transition-colors px-4 py-2.5 font-medium text-sm"
+        >
+          <Plus size={17} />
+          <span className="font-medium text-sm">新建分析</span>
         </button>
-        {!collapsed && (
-          <p className="text-[11px] text-text-secondary mt-2 text-center">输入事件、人物、品牌或话题</p>
-        )}
+        <p className="text-[11px] text-text-secondary mt-2 text-center leading-relaxed">
+          输入事件、人物、品牌或话题
+        </p>
       </div>
 
-      <div className="flex-1 overflow-y-auto overflow-x-hidden p-3 space-y-6">
-        
-        {/* Sessions */}
+      {/* 历史检索。记录多起来之后，靠滚轮找某一次分析是不可接受的。 */}
+      <div className="px-4 pb-3 shrink-0">
+        <div className="relative">
+          <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-text-secondary pointer-events-none" />
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="搜索历史对话"
+            className="w-full bg-soft border border-border rounded-lg pl-8 pr-7 py-1.5 text-xs text-text-main placeholder-text-secondary/60 outline-none focus:border-accent/50 transition-colors"
+          />
+          {query && (
+            <button
+              onClick={() => setQuery('')}
+              title="清空"
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-text-secondary hover:text-text-main"
+            >
+              <X size={12} />
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto overflow-x-hidden px-3 pb-3 space-y-5 custom-scrollbar">
+
         <section>
-          {!collapsed && <h3 className="text-xs font-semibold text-text-secondary uppercase tracking-wider mb-3 px-2">今天</h3>}
-          <div className="space-y-1">
-            <SessionItem 
-              collapsed={collapsed}
-              title="小红书平台对某品牌争议舆情分析" 
-              platform="小红书" 
-              status="running" 
-              time="12:31" 
-              active
-            />
-            <SessionItem 
-              collapsed={collapsed}
-              title="华为Mate新品发布全网情绪监测" 
-              platform="微博" 
-              status="completed" 
-              time="09:15" 
-            />
+          <div className="flex items-center justify-between mb-2 px-1">
+            <h3 className="text-[11px] font-semibold text-text-secondary uppercase tracking-wider flex items-center gap-1.5">
+              <MessageSquare size={12} /> 历史对话
+              {total > 0 && (
+                <span className="text-text-secondary/60 font-normal tabular-nums">{total}</span>
+              )}
+            </h3>
+            <button
+              onClick={onRefreshHistory}
+              title="刷新记录"
+              className="p-1 rounded hover:bg-hover text-text-secondary hover:text-text-main transition-colors"
+            >
+              <RefreshCw size={12} />
+            </button>
+          </div>
+
+          <div className="space-y-1.5">
+            {filtered.length === 0 ? (
+              <div className="flex flex-col items-center gap-2 py-6 text-text-secondary">
+                <Inbox size={20} className="opacity-40" />
+                <span className="text-[11px]">
+                  {query ? '没有匹配的历史对话' : '暂无分析记录'}
+                </span>
+              </div>
+            ) : (
+              filtered.map(group => (
+                <ProjectGroup
+                  key={group.id}
+                  group={group}
+                  collapsed={isCollapsed(group.id)}
+                  onToggle={() => toggleGroup(group.id)}
+                  onOpenSession={onOpenSession}
+                  onRerun={onRerun}
+                  activeTaskId={activeTaskId}
+                />
+              ))
+            )}
           </div>
         </section>
 
-        {/* Filters */}
         <section>
-          {!collapsed && (
-            <div className="flex items-center gap-2 text-xs font-semibold text-text-secondary uppercase tracking-wider mb-3 px-2">
-              <Filter size={14} /> 筛选器
-            </div>
-          )}
-          {!collapsed ? (
-            <div className="px-2 flex flex-wrap gap-2">
-              <span className="px-2 py-1 text-[11px] bg-white/5 border border-border rounded-full cursor-pointer hover:bg-white/10">多平台对比</span>
-              <span className="px-2 py-1 text-[11px] bg-white/5 border border-border rounded-full cursor-pointer hover:bg-white/10">仅爆款帖</span>
-            </div>
-          ) : (
-            <div className="flex justify-center">
-              <button className="p-2 rounded-md hover:bg-white/5 text-text-secondary"><Filter size={18} /></button>
-            </div>
-          )}
-        </section>
-
-        {/* Prompt Templates */}
-        <section>
-          {!collapsed && (
-            <div className="flex items-center gap-2 text-xs font-semibold text-text-secondary uppercase tracking-wider mb-3 px-2">
-              <LayoutTemplate size={14} /> Prompt 模板
-            </div>
-          )}
-          {!collapsed ? (
-            <div className="space-y-1">
-              {['舆情总览', '传播路径分析', '争议点提取', '风险预警'].map(tpl => (
-                <div key={tpl} className="px-3 py-2 rounded-md text-sm text-text-secondary hover:text-text-main hover:bg-white/5 cursor-pointer flex items-center gap-2">
-                  <Hash size={14} /> {tpl}
+          <div className="flex items-center gap-2 text-[11px] font-semibold text-text-secondary uppercase tracking-wider mb-2 px-1">
+            <LayoutTemplate size={12} /> 分析模板
+          </div>
+          <div className="space-y-1">
+            {ANALYSIS_TEMPLATES.map(tpl => (
+              <div
+                key={tpl.label}
+                onClick={() => onRerun?.(tpl.label)}
+                title={tpl.hint}
+                className="group px-3 py-2 rounded-lg cursor-pointer border border-transparent hover:border-border hover:bg-hover transition-colors"
+              >
+                <div className="flex items-center gap-2 text-sm text-text-main">
+                  <Hash size={13} className="text-text-secondary group-hover:text-accent transition-colors" />
+                  {tpl.label}
                 </div>
-              ))}
-            </div>
-          ) : (
-             <div className="flex justify-center">
-              <button className="p-2 rounded-md hover:bg-white/5 text-text-secondary"><LayoutTemplate size={18} /></button>
-            </div>
-          )}
+                <div className="text-[10px] text-text-secondary/80 mt-0.5 pl-[21px] leading-snug">
+                  {tpl.hint}
+                </div>
+              </div>
+            ))}
+          </div>
         </section>
 
-      </div>
+        {/* 把系统真实在做什么讲清楚，避免用户以为这只是个聊天框 */}
+        <section>
+          <div className="flex items-center gap-2 text-[11px] font-semibold text-text-secondary uppercase tracking-wider mb-2 px-1">
+            <Sparkles size={12} /> 系统能力
+          </div>
+          <div className="rounded-lg border border-border bg-soft p-3 space-y-2">
+            {CAPABILITIES.map(([title, desc]) => (
+              <div key={title} className="flex gap-2">
+                <span className="w-1 h-1 rounded-full bg-accent mt-1.5 shrink-0" />
+                <div className="min-w-0">
+                  <div className="text-[11px] text-text-main leading-tight">{title}</div>
+                  <div className="text-[10px] text-text-secondary/80 leading-tight truncate">{desc}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
 
-      {/* Collapse Toggle */}
-      <div className="p-3 border-t border-border/50 shrink-0 flex justify-end">
-        <button 
-          onClick={onToggle}
-          className="p-2 rounded-md hover:bg-white/5 text-text-secondary hover:text-text-main transition-colors"
-        >
-          {collapsed ? <ChevronRight size={18} /> : <ChevronLeft size={18} />}
-        </button>
       </div>
     </div>
   );
 }
 
-function SessionItem({ collapsed, title, platform, status, time, active }) {
-  const statusColors = {
-    running: 'bg-accent',
-    completed: 'bg-success',
-    waiting: 'bg-warning'
-  };
+/**
+ * 一个项目 = 同一关键词下的多场对话 + 这个项目的长期记忆。
+ * 跨会话记忆的意义就在这一层：第二次分析同一主题时，前一次得出的结论
+ * （含"已确认/待验证"状态）会作为背景进入双方视野。
+ */
+function ProjectGroup({ group, collapsed, onToggle, onOpenSession, onRerun, activeTaskId }) {
+  const convs = group.conversations || [];
+  return (
+    <div className="rounded-lg border border-border bg-soft/40 overflow-hidden">
+      <button
+        onClick={onToggle}
+        className="w-full flex items-center gap-2 px-2.5 py-2 text-left hover:bg-hover transition-colors"
+      >
+        <FolderOpen size={13} className="text-accent shrink-0" />
+        <span className="text-[12px] font-medium text-text-main truncate flex-1">{group.name}</span>
+        {group.memoryCount > 0 && (
+          <span
+            title={`${group.memoryCount} 条项目记忆`}
+            className="flex items-center gap-0.5 text-[10px] text-text-secondary shrink-0"
+          >
+            <Brain size={10} /> {group.memoryCount}
+          </span>
+        )}
+        <span className="text-[10px] text-text-secondary tabular-nums shrink-0">{convs.length}</span>
+        <ChevronDown
+          size={12}
+          className={clsx(
+            "text-text-secondary shrink-0 transition-transform",
+            collapsed && "-rotate-90"
+          )}
+        />
+      </button>
 
-  if (collapsed) {
-    return (
-      <div className={clsx(
-        "w-10 h-10 mx-auto rounded-xl flex items-center justify-center relative cursor-pointer group",
-        active ? "bg-white/10" : "hover:bg-white/5"
-      )}>
-        <MessageSquare size={16} className={active ? "text-accent" : "text-text-secondary group-hover:text-text-main"} />
-        <div className={clsx("absolute top-0 right-0 w-2.5 h-2.5 border-2 border-sidebar rounded-full", statusColors[status])} />
-      </div>
-    );
-  }
+      {!collapsed && (
+        <div className="px-1.5 pb-1.5 space-y-0.5">
+          {convs.length === 0 ? (
+            <p className="text-[10px] text-text-secondary px-1.5 py-2">暂无对话</p>
+          ) : (
+            convs.map(c => (
+              <SessionItem
+                key={c.taskId}
+                item={c}
+                active={c.taskId === activeTaskId}
+                onClick={() => onOpenSession?.(c.taskId)}
+                onRerun={() => onRerun?.(c.title)}
+              />
+            ))
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function SessionItem({ item, active, onClick, onRerun }) {
+  const meta = STATUS_META[item.status] || STATUS_META.completed;
 
   return (
-    <div className={clsx(
-      "relative p-3 rounded-card cursor-pointer transition-colors group",
-      active ? "bg-card border border-border shadow-sm" : "hover:bg-white/5 border border-transparent"
-    )}>
-      {active && <div className="absolute left-0 top-3 bottom-3 w-1 bg-accent rounded-r-md" />}
-      <div className="flex justify-between items-start gap-2 mb-1">
-        <div className="font-medium text-sm text-text-main truncate">{title}</div>
-        <div className={clsx("w-2 h-2 rounded-full shrink-0 mt-1.5", statusColors[status])} />
+    <div
+      onClick={onClick}
+      title={`${item.title} · ${meta.label}${item.summary ? `\n${item.summary}` : ''}`}
+      className={clsx(
+        "group p-2 rounded-lg cursor-pointer transition-colors border",
+        active
+          ? "bg-accent/10 border-accent/25"
+          : "border-transparent hover:border-border hover:bg-hover"
+      )}
+    >
+      <div className="flex justify-between items-start gap-2 mb-0.5">
+        <div className="font-medium text-[12px] text-text-main truncate">{item.title}</div>
+        <div className={clsx("w-1.5 h-1.5 rounded-full shrink-0 mt-1", meta.dot)} />
       </div>
-      <div className="flex justify-between items-center text-[11px] text-text-secondary">
-        <span className="px-1.5 py-0.5 bg-white/5 rounded-full border border-white/5">{platform}</span>
-        <span className="flex items-center gap-1"><Clock size={10} /> {time}</span>
+      {item.summary && (
+        <p className="text-[10px] text-text-secondary/80 leading-snug line-clamp-2 mb-1">
+          {item.summary}
+        </p>
+      )}
+      <div className="flex items-center gap-2 text-[10px] text-text-secondary">
+        <span className="flex items-center gap-1">
+          <Clock size={9} /> {item.time || '--:--'}
+        </span>
+        {item.date && <span className="opacity-60">{item.date}</span>}
+        {/* 重新分析是次级操作，默认不占位：点条目本身是"打开那一次对话"，
+            重新采集只会拿到另一批数据，必须是用户主动选择。 */}
+        <button
+          onClick={(e) => { e.stopPropagation(); onRerun?.(); }}
+          title="重新采集并分析（会得到新数据）"
+          className="ml-auto flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity text-accent hover:text-accent-strong"
+        >
+          <RotateCw size={9} /> 重新分析
+        </button>
       </div>
     </div>
   );

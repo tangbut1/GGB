@@ -1,23 +1,66 @@
+import os
+import glob
 import pandas as pd
 import numpy as np
 from typing import List, Dict, Any, Tuple, Optional
 from pathlib import Path
 import json
 from datetime import datetime, timedelta
-from prophet import Prophet
 import warnings
 warnings.filterwarnings('ignore')
+
+from ..net_safety import safe_write_path
+
+
+def _seed_tbb_path() -> None:
+    """把 prophet 自带的 TBB 目录前置到 PATH（仅 Windows 需要）。
+
+    cmdstanpy 在 Windows 上构造 CmdStanModel 时会执行
+    ``where.exe tbb.dll``，并用 ``universal_newlines=True`` 读它的输出——
+    也就是按 UTF-8 解码。中文 Windows 上 where.exe 找不到文件时，会把
+    「信息: 用提供的模式无法找到文件。」按 GBK 写进 stdout（cmdstanpy 把
+    stderr 合并到了 stdout），UTF-8 解码当场抛 UnicodeDecodeError。
+    cmdstanpy 只捕获 RuntimeError，这个异常于是冒到 Prophet() 构造里，
+    最终表现成 ``'Prophet' object has no attribute 'stan_backend'``，
+    趋势预测静默退化成线性基线。
+
+    预置 PATH 让 where.exe 能命中 tbb.dll，它就不再打印那句本地化提示，
+    cmdstanpy 也就不会崩。prophet 的 wheel 里本来就带着这份 tbb.dll，
+    所以这不是绕过依赖，只是把 cmdstanpy 自己也会做的那步 PATH 注入
+    提前做掉（它的异常处理被编码问题吃掉了）。
+    """
+    try:
+        import prophet
+        candidates = glob.glob(os.path.join(
+            os.path.dirname(os.path.abspath(prophet.__file__)),
+            'stan_model', '*', 'stan', 'lib', 'stan_math', 'lib', 'tbb',
+        ))
+    except Exception:  # noqa: BLE001
+        return
+    if not candidates:
+        return
+    tbb_dir = candidates[0]
+    if os.path.isdir(tbb_dir) and tbb_dir not in os.environ.get('PATH', '').split(os.pathsep):
+        os.environ['PATH'] = os.pathsep.join([tbb_dir, os.environ.get('PATH', '')])
+
+
+_seed_tbb_path()
+
+from prophet import Prophet  # noqa: E402  必须在 _seed_tbb_path() 之后导入
 
 
 class TrendPredictor:
     """趋势预测器 - 基于Prophet模型的市场趋势预测"""
-    
+
     def __init__(self):
         self.model = None
         self.model_type = "prophet"
         self.forecast_periods = 30  # 默认预测30天
         self._training_df = pd.DataFrame()
-        
+        # Prophet 拟合失败的原因。退化到线性基线时必须把真实原因带给上层，
+        # 否则用户只看到"线性基线"四个字，不知道该去修什么。
+        self.fit_error: str = ""
+
     def prepare_data(self, sentiment_data: List[Dict[str, Any]]) -> pd.DataFrame:
         """
         准备预测数据
@@ -100,9 +143,11 @@ class TrendPredictor:
             # 训练模型
             self.model.fit(df)
             self.model_type = "prophet"
+            self.fit_error = ""
             return True
         except Exception as e:
-            print(f"Prophet模型训练失败: {e}")
+            self.fit_error = f"{type(e).__name__}: {e}"
+            print(f"Prophet模型训练失败: {self.fit_error}")
             baseline_model = self._build_baseline_model(df)
             if baseline_model is not None:
                 self.model = baseline_model
@@ -315,14 +360,18 @@ class TrendPredictor:
             results: 预测结果
             file_path: 保存路径
         """
-        Path(file_path).parent.mkdir(parents=True, exist_ok=True)
-        
+        # file_path 只往 safe_write_path 里流：先校验再派生目录，避免
+        # "上游传什么就用什么"拼出一条没把过关的路径。
+        target = safe_write_path(file_path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+
         # 添加时间戳
         results['generated_at'] = datetime.now().isoformat()
-        
-        with open(file_path, 'w', encoding='utf-8') as f:
-            json.dump(results, f, ensure_ascii=False, indent=2, default=str)
-        
+
+        target.write_text(
+            json.dumps(results, ensure_ascii=False, indent=2, default=str),
+            encoding='utf-8')
+
         print(f"✅ 趋势预测结果已保存到 {file_path}")
     
     def get_trend_summary(self, results: Dict[str, Any]) -> Dict[str, Any]:

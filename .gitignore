@@ -30,6 +30,11 @@ logs/
 *.pdf
 *.docx
 
+# 依赖清单是工程文件，不是数据输出。上面的 *.json 会把它们一起吞掉，
+# 克隆下来就没法 npm install / 复现依赖版本，所以显式放行。
+!package.json
+!package-lock.json
+
 # Jupyter
 .ipynb_checkpoints/
 *.ipynb
@@ -45,3 +50,6 @@ dist/
 .DS_Store
 Thumbs.db
 frontend/node_modules/
+
+# 安全扫描器工作目录
+.mimosa/

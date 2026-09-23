@@ -1,7 +1,9 @@
 import os
 from typing import Any, Dict, List, Literal, Optional
 
-import requests
+from loguru import logger
+
+from .forum.llm_host import validate_endpoint, post_llm_json
 
 Provider = Literal["openai", "meta", "huggingface", "custom", "none"]
 
@@ -77,6 +79,15 @@ class AIClient:
     def _classify_with_openai(self, texts: List[str]) -> List[float]:
         headers = {"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"}
         url = os.getenv("OPENAI_CHAT_URL", "https://api.openai.com/v1/chat/completions")
+        # 端点地址可被环境变量改写，属于不可信输入。请求前校验协议与解析后
+        # IP：本地模型服务（Ollama/vLLM 跑在 127.0.0.1）是合理配置，用
+        # MP_ALLOW_PRIVATE_LLM_ENDPOINTS=1 显式放开，默认关。判定逻辑与
+        # LLMHost 同源，见 src/net_safety.py。
+        try:
+            endpoint = validate_endpoint(url)
+        except ValueError as e:
+            logger.warning(f"拒绝请求不安全的 LLM 端点 {url}: {e}")
+            return self._rule_based_scores(texts)
         outputs: List[float] = []
         for chunk in _batch(texts, 8):
             prompt = "\n".join([f"[{i}] {t}" for i, t in enumerate(chunk)])
@@ -88,9 +99,8 @@ class AIClient:
                 ],
                 "temperature": 0.0,
             }
-            resp = requests.post(url, headers=headers, json=payload, timeout=60)
-            resp.raise_for_status()
-            content = resp.json()["choices"][0]["message"]["content"].strip()
+            data = post_llm_json(url, payload, headers)
+            content = data["choices"][0]["message"]["content"].strip()
             outputs.extend(_safe_parse_scores(content, len(chunk)))
         return outputs
 
@@ -138,9 +148,7 @@ class AIClient:
         try:
             for chunk in _batch(texts, 16):
                 payload = {"texts": list(chunk)}
-                resp = requests.post(self.endpoint, json=payload, headers=headers, timeout=60)
-                resp.raise_for_status()
-                data = resp.json()
+                data = post_llm_json(self.endpoint, payload, headers)
                 if isinstance(data, dict):
                     data = data.get("scores") or data.get("data") or data.get("result")
                 if isinstance(data, list):

@@ -1,11 +1,17 @@
-from docx import Document
-from docx.shared import Inches, Pt
-from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.enum.table import WD_TABLE_ALIGNMENT
-from docx.oxml.ns import qn
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from datetime import datetime
+
+try:
+    from docx import Document
+    from docx.shared import Inches, Pt
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.enum.table import WD_TABLE_ALIGNMENT
+    from docx.oxml.ns import qn
+
+    _HAS_DOCX = True
+except ImportError:
+    _HAS_DOCX = False
 
 
 class DOCXReportGenerator:
@@ -34,6 +40,9 @@ class DOCXReportGenerator:
             生成的DOCX文件路径
         """
         # 创建文档
+        if not _HAS_DOCX:
+            raise ImportError("缺少可选依赖 python-docx，请先安装：pip install python-docx")
+
         self.doc = Document()
         
         # 设置文档样式

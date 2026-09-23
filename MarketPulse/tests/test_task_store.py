@@ -1,6 +1,7 @@
 import os
 import sys
 import tempfile
+import threading
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -63,3 +64,51 @@ def test_task_store_get_missing_returns_none():
     with tempfile.TemporaryDirectory() as tmpdir:
         store = TaskStore(tmpdir)
         assert store.get("nonexistent") is None
+
+
+def test_task_store_update_stats_does_not_deadlock():
+    """update_stats 在一次持锁内做读-改-写，_read/_write 也取同一把锁。
+
+    锁必须是可重入的，否则它自己把自己锁死——调用方（Flask 后台线程）
+    会一直挂着，任务永远写不上终态。
+    """
+    with tempfile.TemporaryDirectory() as tmpdir:
+        store = TaskStore(tmpdir)
+        store.create("t", "kw", "news")
+        store.update_status("t", "completed")
+
+        done = threading.Event()
+
+        def writer():
+            store.update_stats("t", {"duration_seconds": 1.5, "total_news": 7})
+            done.set()
+
+        th = threading.Thread(target=writer, daemon=True)
+        th.start()
+        assert done.wait(timeout=5), "update_stats 死锁了"
+        th.join(timeout=5)
+
+        stats = store.get("t")["stats"]
+        assert stats["duration_seconds"] == 1.5
+        assert stats["total_news"] == 7
+
+
+def test_task_store_concurrent_updates_keep_all_keys():
+    """多线程同时写同一个任务不能丢 key，也不能互相锁死。"""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        store = TaskStore(tmpdir)
+        store.create("t", "kw", "news")
+
+        def writer(i):
+            for n in range(10):
+                store.update_stats("t", {f"k{i}": n})
+
+        threads = [threading.Thread(target=writer, args=(i,)) for i in range(4)]
+        for th in threads:
+            th.start()
+        for th in threads:
+            th.join(timeout=10)
+        assert not any(th.is_alive() for th in threads)
+
+        stats = store.get("t")["stats"]
+        assert sorted(k for k in stats if k.startswith("k")) == ["k0", "k1", "k2", "k3"]

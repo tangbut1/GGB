@@ -1,6 +1,8 @@
 import os
 import json
 
+from ..net_safety import safe_write_path
+
 HTML_TEMPLATE = r"""<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -231,7 +233,9 @@ def export_html_report(report_data: dict, output_path: str) -> str:
     report_json = json.dumps(report_data, ensure_ascii=False, default=str)
     html_content = html_content.replace("__REPORT_DATA_PLACEHOLDER__", report_json)
 
-    with open(output_path, "w", encoding="utf-8") as f:
-        f.write(html_content)
+    # output_path 只往 safe_write_path 里流：先校验再写。输出目录可由
+    # config 配置，那是明确的意图；但不允许路径里含上级引用。
+    target = safe_write_path(output_path)
+    target.write_text(html_content, encoding="utf-8")
 
     return output_path

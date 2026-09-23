@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, List
@@ -15,10 +16,17 @@ class EventStore:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._ensure_schema()
 
+    @contextmanager
     def _connect(self) -> sqlite3.Connection:
+        # sqlite3 的连接上下文管理器只提交事务、不关闭连接；
+        # 必须显式 close，否则连接泄漏（Windows 下连临时库文件都删不掉）。
         conn = sqlite3.connect(self.db_path)
         conn.row_factory = sqlite3.Row
-        return conn
+        try:
+            yield conn
+            conn.commit()
+        finally:
+            conn.close()
 
     def _ensure_schema(self) -> None:
         with self._connect() as conn:

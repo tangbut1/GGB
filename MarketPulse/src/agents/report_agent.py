@@ -19,6 +19,7 @@ class ReportAgent(BaseAgent):
         keyword = input_data.get("keyword", "未知关键词")
         task_id = input_data.get("task_id", "default")
         forum_messages = input_data.get("forum_messages", [])
+        verdict = input_data.get("verdict", {})
 
         report_data = {
             "keyword": keyword,
@@ -29,9 +30,16 @@ class ReportAgent(BaseAgent):
             "trend_results": trend_results
         }
 
-        # 论坛辩论过程提取
+        # 论坛辩论过程提取（消费结构化消息）
         forum_debate = self._extract_forum_debate(forum_messages)
         report_data["forum_debate"] = forum_debate
+
+        # 关键词（前端热词 Tab 用）
+        report_data["keywords"] = self._extract_keywords(analyzed_news)
+        # 带权重的版本。jieba 的 extract_tags 能直接给出 TF-IDF 权重，
+        # 之前只取了词表把权重丢掉了，前端只能拿排名硬凑一个数当柱高——
+        # 那是编数据。权重本身是语料内的真实统计量，可以直接展示。
+        report_data["keyword_weights"] = self._extract_keyword_weights(analyzed_news)
 
         # 简单结语（概览 Tab 用）
         llm_prompt = (
@@ -68,13 +76,16 @@ class ReportAgent(BaseAgent):
         report_data["ai_insights"] = ai_insights
 
         # 生成结构化 debate_cards（供前端辩论区直接渲染）
-        debate_cards = self._generate_debate_cards(forum_log, sentiment_summary, trend_summary)
+        debate_cards = self._generate_debate_cards(forum_messages, sentiment_summary, trend_summary)
         report_data["debate_cards"] = debate_cards
         ai_insights["debate_cards"] = debate_cards
 
         # 新增：生成最终报告
         final_report = self._generate_final_report(keyword, forum_messages)
         report_data["final_report"] = final_report
+
+        # 裁判终裁结论
+        report_data["verdict"] = verdict
 
         return {
             "status": "success",
@@ -87,26 +98,41 @@ class ReportAgent(BaseAgent):
 
     # ── 论坛辩论提取 ──────────────────────────────────────────
     @staticmethod
-    def _extract_forum_debate(forum_log: list) -> list:
-        """从 forum.log 原始行中提取结构化辩论时间线"""
-        if not forum_log:
+    def _normalize_messages(forum_messages) -> list:
+        """把结构化消息 / 原始日志行统一成 {agent, round, content} 列表。"""
+        if not forum_messages:
             return []
+        normalized = []
+        for msg in forum_messages:
+            if isinstance(msg, dict):
+                normalized.append({
+                    "agent": msg.get("agent", "Unknown"),
+                    "round": msg.get("round", 1),
+                    "content": str(msg.get("content", "")),
+                })
+            elif isinstance(msg, str):
+                m = re.match(
+                    r'\[[\d\-:\s]+\]\s*\[(\w+)\]\s*\[Round\s*(\d+)\]\s*(.+)',
+                    msg.strip(), re.DOTALL)
+                if m:
+                    normalized.append({
+                        "agent": m.group(1),
+                        "round": int(m.group(2)),
+                        "content": m.group(3).strip(),
+                    })
+        return normalized
 
-        # 过滤出 Agent 发言，跳过 SYSTEM 和日志头
-        agent_pattern = re.compile(
-            r'\[[\d\-:\s]+\]\s*\[(HOST|CollectAgent|SentimentAgent|TrendAgent|ReportAgent)\]\s*\[Round\s*(\d+)\]\s*(.+)'
-        )
+    @classmethod
+    def _extract_forum_debate(cls, forum_messages: list) -> list:
+        """从论坛消息中提取结构化辩论时间线"""
+        entries = cls._normalize_messages(forum_messages)
         debate_entries = []
-        for line in forum_log:
-            line = line.strip()
-            if not line or "--- Forum Log" in line:
+        for e in entries:
+            agent = e["agent"]
+            if agent == "SYSTEM":
                 continue
-            m = agent_pattern.match(line)
-            if not m:
-                continue
-            agent = m.group(1)
-            round_num = int(m.group(2))
-            content = m.group(3).strip()
+            round_num = e["round"]
+            content = e["content"].strip()
 
             # 跳过无实质内容
             if len(content) < 5:
@@ -172,14 +198,14 @@ class ReportAgent(BaseAgent):
 
         return debate_entries
 
-    @staticmethod
-    def _generate_debate_cards(forum_messages: list, sentiment_summary: dict, trend_summary: dict) -> list:
-        """从 forum_messages 生成结构化辩论卡片"""
+    @classmethod
+    def _generate_debate_cards(cls, forum_messages: list, sentiment_summary: dict, trend_summary: dict) -> list:
+        """从论坛结构化消息生成辩论卡片"""
         if not forum_messages:
             return []
 
-        # 已经天然是 dict，无需正则合并多行
-        entries = forum_messages
+        # 统一成 {agent, round, content} dict
+        entries = cls._normalize_messages(forum_messages)
 
         # ── Step B: 过滤过程日志（HOST 不过滤）──
         process_kw = ["补充词", "新数据", "采集完成", "开始采集", "搜索完成",
@@ -652,26 +678,56 @@ JSON 格式（严格遵循，不要修改 key 名）：
         except Exception:
             return []
 
-    def _generate_final_report(self, keyword: str, forum_log: list) -> dict:
+    @staticmethod
+    def _extract_keyword_weights(news_list: list) -> List[Dict[str, Any]]:
+        """返回 [{term, tfidf, doc_freq}]，权重与文档频率都是语料内的真实统计量。
+
+        TF-IDF 权重由 jieba 计算（含 IDF 词典），不是归一化到 0-1 的伪概率；
+        doc_freq 是「前 50 条标题里有多少条出现了该词」，用来区分
+        「一篇长文里反复出现」和「很多篇都提到」——前者 TF 高但代表性弱。
+        """
+        titles = []
+        for n in news_list[:50]:
+            if isinstance(n, dict):
+                t = n.get("title", "")
+                if t:
+                    titles.append(t)
+        if not titles:
+            return []
+        try:
+            import jieba.analyse
+            combined = "。".join(titles)
+            weighted = jieba.analyse.extract_tags(combined, topK=20, withWeight=True)
+        except Exception:
+            return []
+
+        result: List[Dict[str, Any]] = []
+        total = len(titles)
+        for term, weight in weighted:
+            # 词可能带词性后缀（jieba 的 allowPOS 过滤前的原词），用子串计数
+            freq = sum(1 for t in titles if term and term in t)
+            result.append({
+                "term": term,
+                "tfidf": round(float(weight), 6),
+                "doc_freq": freq,
+                "doc_total": total,
+            })
+        return result
+
+    def _generate_final_report(self, keyword: str, forum_messages: list) -> dict:
         """综合红方、蓝方、主持人发言生成最终报告"""
         red_text = []
         blue_text = []
         host_text = []
-        
-        agent_pattern = re.compile(
-            r'\[[\d\-:\s]+\]\s*\[(HOST|CollectAgent|SentimentAgent|TrendAgent|ReportAgent)\]\s*\[Round\s*(\d+)\]\s*(.+)'
-        )
-        
-        for line in forum_log:
-            m = agent_pattern.match(line.strip())
-            if m:
-                agent, content = m.group(1), m.group(3)
-                if agent == "SentimentAgent":
-                    red_text.append(content)
-                elif agent == "TrendAgent":
-                    blue_text.append(content)
-                elif agent == "HOST":
-                    host_text.append(content)
+
+        for e in self._normalize_messages(forum_messages):
+            agent, content = e["agent"], e["content"]
+            if agent == "SentimentAgent":
+                red_text.append(content)
+            elif agent == "TrendAgent":
+                blue_text.append(content)
+            elif agent == "HOST":
+                host_text.append(content)
 
         red_combined = "\n".join(red_text)
         blue_combined = "\n".join(blue_text)

@@ -7,6 +7,21 @@ from textblob import TextBlob
 import jieba
 from collections import Counter
 
+from ..net_safety import safe_write_path
+
+
+def _torch_available() -> bool:
+    """ transformers 的 pipeline 需要 torch/tf/flax 之一，缺一个都跑不起来。
+
+    只做 import 探测，不下载任何东西。requirements.txt 里没有 torch，
+    所以正常情况下这里返回 False，FinBERT 一路直接跳过。
+    """
+    try:
+        import torch  # noqa: F401
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
 
 class SentimentAnalyzer:
     """情绪分析器 - 多模型融合分析"""
@@ -25,12 +40,19 @@ class SentimentAnalyzer:
             '消极', '悲观', '看空', '卖出', '减持', '下跌', '亏损', '利空', '跌破', '创新低'
         }
         
-        # 初始化 FinBERT 模型
+        # 初始化 FinBERT 模型。
+        # FinBERT 是这一路的加分项而不是必需项：没装 torch 时整条流水线
+        # 靠「财经词典 + SnowNLP」照样能跑。这里先探一次 torch，装不上
+        # 就连模型都不去下载——否则每次 new SentimentAnalyzer() 都会先试着
+        # 拉一个几百 MB 的模型再失败，既慢又在日志里刷一句吓人的报错。
         self.finbert_pipeline = None
-        try:
-            self.finbert_pipeline = pipeline("sentiment-analysis", model="yiyanghkust/finbert-tone-chinese")
-        except Exception as e:
-            print(f"Failed to load FinBERT model: {e}")
+        if _torch_available():
+            try:
+                self.finbert_pipeline = pipeline("sentiment-analysis", model="yiyanghkust/finbert-tone-chinese")
+            except Exception as e:
+                print(f"FinBERT 模型加载失败，本次运行改用词典 + SnowNLP：{e}")
+        else:
+            print("未检测到 PyTorch，FinBERT 不可用；本次运行使用财经词典 + SnowNLP。")
     
     def analyze_single(self, text: str) -> Dict[str, float]:
         """
@@ -139,34 +161,42 @@ class SentimentAnalyzer:
     def analyze_news_batch(self, news_list: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
         批量分析新闻情绪
-        
+
         Args:
             news_list: 新闻列表
-            
+
         Returns:
             包含情绪分析的新闻列表
         """
         analyzed_news = []
-        
+
         for news in news_list:
             if not isinstance(news, dict):
                 continue
-            
+
+            news_with_sentiment = news.copy()
+
+            # 已经打过分就直接复用。追问轮会把首轮的 analyzed_news 再送进来，
+            # SnowNLP 是确定性的（同样输入同样输出），重算一遍只会白烧 CPU：
+            # 300 条语料要跑好几秒，用户点一次追问就卡一次。
+            if isinstance(news.get('sentiment_score'), (int, float)):
+                analyzed_news.append(news_with_sentiment)
+                continue
+
             # 合并标题和内容进行分析
             text = f"{news.get('title', '')} {news.get('content', '')} {news.get('summary', '')}"
-            
+
             sentiment_result = self.analyze_single(text)
-            
+
             # 添加情绪分析结果到新闻数据
-            news_with_sentiment = news.copy()
             news_with_sentiment.update({
                 'sentiment_score': sentiment_result['sentiment'],
                 'sentiment_confidence': sentiment_result['confidence'],
                 'sentiment_label': sentiment_result['label']
             })
-            
+
             analyzed_news.append(news_with_sentiment)
-        
+
         return analyzed_news
     
     def get_sentiment_summary(self, analyzed_news: List[Dict[str, Any]]) -> Dict[str, Any]:
@@ -224,16 +254,20 @@ class SentimentAnalyzer:
             summary: 情绪分析摘要
             file_path: 保存路径
         """
-        Path(file_path).parent.mkdir(parents=True, exist_ok=True)
-        
+        # file_path 只往 safe_write_path 里流：先校验再派生目录，避免
+        # "上游传什么就用什么"拼出一条没把过关的路径。
+        target = safe_write_path(file_path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+
         results = {
             'summary': summary,
             'detailed_results': analyzed_news
         }
-        
-        with open(file_path, 'w', encoding='utf-8') as f:
-            json.dump(results, f, ensure_ascii=False, indent=2)
-        
+
+        target.write_text(
+            json.dumps(results, ensure_ascii=False, indent=2),
+            encoding='utf-8')
+
         print(f"✅ 情绪分析结果已保存到 {file_path}")
 
 

@@ -6,6 +6,8 @@ from typing import Dict, Any, Optional
 
 import requests
 
+from ..forum.llm_host import validate_endpoint
+
 @dataclass
 class AgentResult:
     status: str
@@ -38,6 +40,15 @@ class LLMClient:
         if not endpoint.endswith("/chat/completions"):
             endpoint = f"{endpoint}/chat/completions"
 
+        # base_url 可被环境变量改写，属于不可信输入。与 BaseAgent 走同一道
+        # 校验（src/net_safety.py）：协议只准 http/https，host 解析后不得
+        # 落在环回/私有/链路本地/保留段。本地模型服务（Ollama/vLLM 跑在
+        # 127.0.0.1）用 MP_ALLOW_PRIVATE_LLM_ENDPOINTS=1 显式放开。
+        try:
+            endpoint = validate_endpoint(endpoint)
+        except ValueError as e:
+            return f"Error: 端点校验失败: {e}"
+
         payload = {
             "model": model,
             "messages": [
@@ -54,7 +65,9 @@ class LLMClient:
         last_error = ""
         for attempt in range(max_retries + 1):
             try:
-                response = self.session.post(endpoint, headers=headers, json=payload, timeout=timeout)
+                # allow_redirects=False：endpoint 已校验过，但 requests 默认
+                # 跟随 302，放行跟随等于放行"先指向公网、再跳内网"的绕过路径。
+                response = self.session.post(endpoint, headers=headers, json=payload, timeout=timeout, allow_redirects=False)
                 if response.status_code in (401, 403):
                     return "Error: API鉴权失败，请检查 API Key 配置。"
                 if response.status_code == 429:

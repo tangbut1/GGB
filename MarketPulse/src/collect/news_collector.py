@@ -2,12 +2,13 @@ import os
 import json
 import hashlib
 import feedparser
-import requests
 import time
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 from loguru import logger
+
+from ..net_safety import validate_public_url, safe_output_path
 
 
 class NewsCollector:
@@ -133,6 +134,11 @@ class NewsCollector:
         """采集单个RSS源的新闻列表"""
         logger.info(f"Fetching {category} news from {url} ...")
         try:
+            # feedparser.parse(url) 会自己去抓这个 URL，等价于一次服务端
+            # 请求。RSS 源地址来自配置或上游返回，不能默认可信：先过
+            # validate_public_url，挡掉环回/私有/链路本地/保留段，否则
+            # 一条指向 169.254.169.254 的"订阅源"就能探内网。
+            validate_public_url(url, allow_private=False)
             feed = feedparser.parse(url)
             if hasattr(feed, 'bozo') and feed.bozo:
                 logger.warning(f"RSS解析警告: {url} - {getattr(feed, 'bozo_exception', 'Unknown error')}")
@@ -247,7 +253,7 @@ class NewsCollector:
             if link:
                 dedup_key = link
             else:
-                dedup_key = hashlib.md5(f"{title.lower()}::{source}".encode("utf-8")).hexdigest()
+                dedup_key = hashlib.sha256(f"{title.lower()}::{source}".encode("utf-8")).hexdigest()
             
             if dedup_key not in unique_news:
                 unique_news[dedup_key] = news
@@ -264,31 +270,16 @@ class NewsCollector:
             logger.warning("No news to save.")
             return
         
-        # 保存原始数据
-        raw_file_path = self.data_dir / "raw" / "raw_news.json"
+        # 保存原始数据。文件名是固定的，但"这次恰好是常量"不该靠眼睛维持：
+        # 走同一个收敛入口，将来看见的就是同一条判据。
+        raw_file_path = safe_output_path(self.data_dir, "raw", "raw_news.json")
         raw_file_path.parent.mkdir(parents=True, exist_ok=True)
-        
-        with open(raw_file_path, "w", encoding="utf-8") as f:
-            json.dump(news_list, f, ensure_ascii=False, indent=2)
-        
-        logger.success(f"✅ 已保存 {len(news_list)} 条新闻到 {raw_file_path}")
 
-    def safe_request(self, url, retries=3, delay=2):
-        """安全的HTTP请求，带重试机制"""
-        for attempt in range(retries):
-            try:
-                response = requests.get(url, timeout=10, headers={
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
-                })
-                if response.status_code == 200:
-                    return response.text
-            except requests.RequestException as e:
-                logger.warning(f"Attempt {attempt+1} failed for {url}: {e}")
-                if attempt < retries - 1:
-                    time.sleep(delay)
-        
-        logger.error(f"All attempts failed for {url}")
-        return None
+        raw_file_path.write_text(
+            json.dumps(news_list, ensure_ascii=False, indent=2),
+            encoding="utf-8")
+
+        logger.success(f"✅ 已保存 {len(news_list)} 条新闻到 {raw_file_path}")
 
     def create_sample_data(self):
         """创建示例数据作为备用方案"""

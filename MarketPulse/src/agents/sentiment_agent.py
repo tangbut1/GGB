@@ -253,22 +253,31 @@ class SentimentAgent(BaseAgent):
 
     @staticmethod
     def _apply_label_correction(analyzed_news: list, corrected: dict):
-        """根据 LLM 校正结果，更新个体新闻的情感标签"""
+        """按 LLM 校正后的分布，重新分配个体新闻的情感标签。
+
+        只改标签，不动分数。分数是 SnowNLP 对单条文本的实测值，校正改的是
+        "这批里该有多少条算负面"这个分布判断——两回事。曾经在这里把分数
+        也钳到 ±0.15，结果 44 条负面全部变成同一个 -0.15：
+          - 证据卡上的"情绪分"每一条都一样，看起来就是坏数据；
+          - 极化度（|分数| ≥ 0.6 的占比）结构上永远为 0，一个核心指标
+            再也动不了；
+          - 情绪指数退化成标签占比的线性函数，不再是连续测量。
+        原标签保留在 sentiment_label_algo，校正是否真的改了判断由此可查。
+        """
         total = len(analyzed_news)
         target_neg = corrected.get("negative_count", 0)
         target_pos = corrected.get("positive_count", 0)
         # 防止 neg + pos > total 导致同一条新闻同时被标为负和正
         target_neg = min(target_neg, total - target_pos)
 
-        # 按 FinBERT 融合分数排序，最低分的标记为负面
+        # 按分数排序，最低分的标记为负面
         sorted_news = sorted(analyzed_news, key=lambda n: n.get("sentiment_score", 0))
         for i, news in enumerate(sorted_news):
+            news.setdefault("sentiment_label_algo", news.get("sentiment_label", ""))
             if i < target_neg:
                 news["sentiment_label"] = "negative"
-                news["sentiment_score"] = min(news.get("sentiment_score", 0), -0.15)
             elif i >= total - target_pos:
                 news["sentiment_label"] = "positive"
-                news["sentiment_score"] = max(news.get("sentiment_score", 0), 0.15)
             else:
                 news["sentiment_label"] = "neutral"
 

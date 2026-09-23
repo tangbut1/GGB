@@ -86,6 +86,30 @@ class TaskStore:
     def has_payload(self, task_id: str) -> bool:
         return (self.store_dir / "payload" / f"{self._safe_stem(task_id)}.json").exists()
 
+    def delete(self, task_id: str) -> bool:
+        """删除一条历史记录：任务 JSON + 完整结果 payload。
+
+        两个文件必须一起删。只删任务 JSON 的话 payload 还留在
+        payload/ 下，而 _seed_history_from_store 是按任务 JSON 恢复列表的，
+        结果是侧边栏看不见它、磁盘上却永远占着几百 KB，且下次同 id 撞名时
+        会被旧数据覆盖。
+
+        task_id 仍然走 _safe_stem：URL 路径段是不可信输入，删文件比读文件
+        更不该把它直接拼进路径。
+        """
+        with self._lock:
+            removed = False
+            for path in (self._path(task_id),
+                         self.store_dir / "payload" / f"{self._safe_stem(task_id)}.json"):
+                try:
+                    path.unlink()
+                    removed = True
+                except FileNotFoundError:
+                    pass
+                except OSError:
+                    return False
+            return removed
+
     # ── read ─────────────────────────────────────────────────────────────────
 
     def get(self, task_id: str) -> Dict[str, Any] | None:

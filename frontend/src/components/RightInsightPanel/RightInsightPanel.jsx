@@ -1,15 +1,16 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   TrendingUp, PieChart, FileText, FileSearch, ExternalLink, Gavel, Minus,
   PanelRightClose, Info, ShieldCheck, AlertTriangle, BarChart3, Layers,
-  ChevronDown, Clock,
+  ChevronDown, ChevronRight, Clock, CalendarDays, Radio,
 } from 'lucide-react';
 import clsx from 'clsx';
+import { resolveDepth } from '../CenterWorkspace/DepthSelector';
 import {
   Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement,
   ArcElement, BarElement, RadarController, RadialLinearScale, Tooltip, Legend, Filler,
 } from 'chart.js';
-import { Line, Doughnut, Bar, Radar } from 'react-chartjs-2';
+import { Line, Bar, Radar } from 'react-chartjs-2';
 import { useChartColors, useTheme } from '../../theme';
 
 ChartJS.register(
@@ -68,15 +69,17 @@ const fmtNum = (v, d = 2) => (typeof v === 'number' ? v.toFixed(d) : String(v ??
 
 // ── 面板外壳 ────────────────────────────────────────────────────────
 
-export default function RightInsightPanel({ activeTab, onTabChange, analysisData, onCollapse }) {
+export default function RightInsightPanel({ activeTab, onTabChange, analysisData, onCollapse, depth }) {
   const { theme } = useTheme();
   const C = useChartColors(theme);
+  // 右栏是"结论证据面板"，不是图表集合。四个 Tab 各自对应一类可复核的
+  // 依据：趋势读数、可点开验证的证据、事件怎么发展到今天的、以及这批
+  // 数据本身能信到什么程度。缺数据时明确说"本次运行未取得"。
   const tabs = [
-    { id: 'verdict', label: '终裁', icon: <Gavel size={14} /> },
     { id: 'trend', label: '趋势', icon: <TrendingUp size={14} /> },
-    { id: 'sentiment', label: '情感', icon: <PieChart size={14} /> },
-    { id: 'keywords', label: '热词', icon: <FileText size={14} /> },
     { id: 'evidence', label: '证据', icon: <FileSearch size={14} /> },
+    { id: 'timeline', label: '事件脉络', icon: <CalendarDays size={14} /> },
+    { id: 'quality', label: '数据质量', icon: <ShieldCheck size={14} /> },
   ];
 
   return (
@@ -111,11 +114,10 @@ export default function RightInsightPanel({ activeTab, onTabChange, analysisData
       </div>
 
       <div className="flex-1 overflow-y-auto p-4 custom-scrollbar">
-        {activeTab === 'verdict' && <VerdictContent data={analysisData} />}
-        {activeTab === 'trend' && <TrendContent data={analysisData} />}
-        {activeTab === 'sentiment' && <SentimentContent data={analysisData} />}
-        {activeTab === 'keywords' && <KeywordContent data={analysisData} />}
+        {activeTab === 'trend' && <TrendContent data={analysisData} depth={depth} />}
         {activeTab === 'evidence' && <EvidenceContent data={analysisData} />}
+        {activeTab === 'timeline' && <TimelineContent data={analysisData} />}
+        {activeTab === 'quality' && <QualityContent data={analysisData} />}
       </div>
     </div>
   );
@@ -182,8 +184,12 @@ function Disclaimer({ children }) {
   );
 }
 
-const TREND_LABELS = {
-  positive: '积极', negative: '消极', neutral: '平稳', unknown: '未知',
+const TREND_DIRECTION_LABELS = {
+  // 研判卡用的是确定性口径（按日序列前后半段对比）：升温/降温/横盘/反转风险
+  heating: '升温', cooling: '降温', flat: '横盘',
+  reversal_risk: '反转风险', unknown: '未知',
+  // trend_summary 里的旧口径，只在没有研判卡时兜底
+  positive: '积极', negative: '消极', neutral: '平稳',
 };
 
 // 按天真序列里可切换的维度。全部是后端按本批样本算出的真实日度量，
@@ -194,146 +200,6 @@ const DAILY_METRICS = [
   { key: 't1_share', label: 'T1 权威占比', color: 'success', unit: '%' },
   { key: 'volume', label: '声量', color: 'blue', unit: ' 条' },
 ];
-
-// ── 终裁 ────────────────────────────────────────────────────────────
-
-function VerdictContent({ data }) {
-  const { theme } = useTheme();
-  const C = useChartColors(theme);
-  const verdict = data?.verdict;
-  if (!verdict || !verdict.stance) {
-    return <EmptyHint text="暂无终裁数据，请先完成一次分析" />;
-  }
-
-  const stanceCls = verdict.stance === 'negative' ? 'text-danger'
-    : verdict.stance === 'positive' ? 'text-success' : 'text-text-main';
-
-  // 终裁的说服力完全建立在样本上：多少条数据、都是谁说的。追问轮产生的
-  // 终裁样本与首轮相同，也要说明这一点，否则用户会以为是新采集的数据。
-  const total = data?.total_news || 0;
-  const tierDist = data?.collect_meta?.tier_distribution || {};
-
-  return (
-    <div className="space-y-4">
-      <div className="bg-card border border-border rounded-xl p-4">
-        <div className="flex items-center justify-between mb-3">
-          <span className="text-xs text-text-secondary">裁判立场</span>
-          <span className={clsx("text-lg font-semibold", stanceCls)}>
-            {TREND_LABELS[verdict.stance] || verdict.stance}
-          </span>
-        </div>
-        <div className="flex items-center justify-between mb-3">
-          <span className="text-xs text-text-secondary">置信度</span>
-          <span className="text-sm text-text-main tabular-nums">
-            {Math.round((verdict.confidence || 0) * 100)}%
-          </span>
-        </div>
-        <div className="w-full h-1.5 bg-soft rounded-full overflow-hidden">
-          <div
-            className={clsx("h-full rounded-full",
-              verdict.stance === 'negative' ? 'bg-danger'
-                : verdict.stance === 'positive' ? 'bg-success' : 'bg-text-secondary')}
-            style={{ width: `${Math.round((verdict.confidence || 0) * 100)}%` }}
-          />
-        </div>
-        <p className="text-[10px] text-text-secondary mt-2 leading-relaxed">
-          置信度由裁判模型自评，反映其对双方论据一致性的判断，不是统计显著性。
-        </p>
-      </div>
-
-      <Section title="裁定样本口径" icon={<Layers size={12} />}>
-        <div className="space-y-2">
-          <div className="flex justify-between text-[11px]">
-            <span className="text-text-secondary">纳入分析的新闻样本</span>
-            <span className="text-text-main tabular-nums">{total} 条</span>
-          </div>
-          {Object.keys(tierDist).length > 0 && (
-            <div className="flex gap-1.5 h-1.5 rounded-full overflow-hidden bg-soft">
-              {['1', '2', '3', '4'].map(t => {
-                const cnt = Number(tierDist[t] || 0);
-                if (!cnt || !total) return null;
-                return (
-                  <div
-                    key={t}
-                    className="h-full"
-                    style={{
-                      width: `${(cnt / total) * 100}%`,
-                      backgroundColor: tierColors(C)[t],
-                    }}
-                    title={`${TIER_LABELS[t]}：${cnt} 条`}
-                  />
-                );
-              })}
-            </div>
-          )}
-          {Object.keys(tierDist).length > 0 && (
-            <div className="flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-text-secondary">
-              {['1', '2', '3', '4'].map(t => (
-                <span key={t} className="flex items-center gap-1">
-                  <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: tierColors(C)[t] }} />
-                  {TIER_LABELS[t]} {tierDist[t] || 0}
-                </span>
-              ))}
-            </div>
-          )}
-        </div>
-      </Section>
-
-      {verdict.summary && (
-        <Section title="裁定理由">
-          <p className="text-xs text-text-main/90 leading-relaxed">{verdict.summary}</p>
-        </Section>
-      )}
-
-      {verdict.key_disagreements?.length > 0 && (
-        <Section title="核心分歧">
-          <ul className="space-y-1.5">
-            {verdict.key_disagreements.map((d, i) => (
-              <li key={i} className="text-xs text-text-main/90 leading-relaxed flex gap-2">
-                <span className="text-text-secondary shrink-0">{i + 1}.</span>
-                <span>{d}</span>
-              </li>
-            ))}
-          </ul>
-        </Section>
-      )}
-
-      {(verdict.red_strongest || verdict.blue_strongest) && (
-        <Section title="双方最有力论据">
-          <div className="space-y-2">
-            {verdict.red_strongest && (
-              <div className="border-l-2 border-danger pl-2">
-                <div className="text-[10px] text-danger mb-0.5">红方 · 危机视角</div>
-                <p className="text-xs text-text-main/90 leading-relaxed">{verdict.red_strongest}</p>
-              </div>
-            )}
-            {verdict.blue_strongest && (
-              <div className="border-l-2 border-agent-trend pl-2">
-                <div className="text-[10px] text-agent-trend mb-0.5">蓝方 · 理性视角</div>
-                <p className="text-xs text-text-main/90 leading-relaxed">{verdict.blue_strongest}</p>
-              </div>
-            )}
-          </div>
-        </Section>
-      )}
-
-      {verdict.recommendation && (
-        <Section title="行动建议">
-          <p className="text-xs text-text-main/90 leading-relaxed">{verdict.recommendation}</p>
-        </Section>
-      )}
-
-      <MethodNote>
-        <p>终裁由裁判模型在读完红蓝双方全部发言后作出，流程为：立论 → 追问引导 → 反驳 → 终裁。</p>
-        <p>它是两个对抗视角的收敛结果，不是事实认定；涉及具体决策时请以原始信源（见"证据"Tab）为准。</p>
-      </MethodNote>
-
-      <Disclaimer>
-        本结论基于公开网络信息的舆情研判，不构成投资、法律或商业决策建议。
-      </Disclaimer>
-    </div>
-  );
-}
 
 // ── 趋势 ────────────────────────────────────────────────────────────
 
@@ -355,36 +221,85 @@ const MODEL_META = {
   },
 };
 /**
- * 多维舆情画像 + 按天真实序列 + 情绪指数预测。
+ * 核心指标分组。
+ *
+ * 默认只展示四组：情绪指数、负面占比、讨论量与注意力爆发、极化度。它们直接
+ * 支撑研判卡上的结论，是"这个事件现在什么态势"的四个读数。
+ *
+ * 来源多样性、权威占比、低可信占比、日期覆盖度同样重要，但它们回答的是
+ * "这批数据能不能信"，不是"事件怎么样"——放在主区会和结论抢注意力，所以
+ * 收进「数据质量与传播结构」抽屉，需要复核口径时再展开。
+ */
+const CORE_GROUPS = [
+  {
+    label: '情绪与负面',
+    keys: ['sentiment_index', 'negative_share'],
+    note: '整体情绪水位与负面绝对占比。均值尚可但负面占比高，说明少数极端个案在拉低整体。',
+  },
+  {
+    label: '讨论量与注意力爆发',
+    keys: ['volume', 'attention_burst'],
+    note: '采集样本总量与单日峰值相对日均的倍数。尖峰通常对应事件爆发点，也是最可能继续升温的位置。',
+  },
+  {
+    label: '情绪极化',
+    keys: ['polarization'],
+    note: '情绪分绝对值 ≥ 0.6 的样本占比。越高说明立场越两极、温和共识少——这种舆情转向也快。',
+  },
+];
+
+// 数据质量与传播结构。默认收起：它们是结论的可信度前提，不是结论本身。
+const QUALITY_KEYS = ['source_diversity', 'authority_share', 'low_credibility_share', 'date_coverage'];
+
+/**
+ * 多维舆情画像 + 按天真实序列 + 热度演化预警。
  *
  * 单一"情绪指数"读不出一次舆情的性质：同样的均值可能来自少量极端负面，
- * 也可能来自温和的全面偏负，两者风险完全不同。所以先给互相独立的九个
- * 维度（全部由本批样本算出，见 sentiment_indicators.py），再看时序，最后
- * 才是预测。任何一环样本不足时明确说"本次运行未取得"，不补假数据。
+ * 也可能来自温和的全面偏负，两者风险完全不同。所以先给互相独立的维度
+ * （全部由本批样本算出，见 sentiment_indicators.py），再看时序，最后才是
+ * 外推。任何一环样本不足时明确说"本次运行未取得"，不补假数据。
  */
-function TrendContent({ data }) {
+function TrendContent({ data, depth }) {
   const { theme } = useTheme();
   const C = useChartColors(theme);
   const [metric, setMetric] = useState('sentiment_index');
   const [showBasis, setShowBasis] = useState(false);
+  // 数据质量抽屉默认收起。主区只留四组核心指标，避免九个维度把结论冲淡。
+  // 深度切到"深度审计"时由 resolveDepth 展开，用户仍可手动收起。
+  const expandQuality = resolveDepth(depth).expandQuality;
+  const [showQuality, setShowQuality] = useState(expandQuality);
+  useEffect(() => { setShowQuality(expandQuality); }, [expandQuality]);
 
   const predictions = data?.predictions || [];
   const summary = data?.trend_summary || {};
   const indicators = summary.indicators || {};
   const dims = Array.isArray(indicators.dimensions) ? indicators.dimensions : [];
+  const byKey = Object.fromEntries(dims.map(d => [d.key, d]));
   const daily = (Array.isArray(indicators.daily) ? indicators.daily : [])
     .filter(d => d && d.date && d.date !== 'unknown');
   const sample = indicators.sample || {};
   const model = MODEL_META[summary.model_type] || MODEL_META.unknown;
-  const direction = summary.trend_direction || data?.trend_direction || 'unknown';
-  const confidence = summary.confidence ?? data?.confidence ?? 0;
+  // 趋势方向与置信度必须和研判卡一致。研判卡那份是确定性计算（按有日期的
+  // 自然日做前后半段对比），trend_summary 里这份是趋势 Agent 的自评口径。
+  // 两份同时上一屏会互相打架——实测出现过一边"平稳 / 93.8%"、一边
+  // "升温 / 65%"，读者无法判断该信哪个。以研判卡为准，没有研判卡时才退回
+  // trend_summary。
+  const card = data?.verdict_card || null;
+  const direction = card?.trend?.direction
+    || summary.trend_direction || data?.trend_direction || 'unknown';
+  const confidence = (card && typeof card.confidence === 'number')
+    ? card.confidence
+    : (summary.confidence ?? data?.confidence ?? 0);
+  const directionBasis = card?.trend?.basis || '';
   const forecastFeasible = summary.forecast_feasible !== false && daily.length >= 2;
 
-  const radarData = dims.length > 0 ? {
-    labels: dims.map(d => d.label),
+  const radarKeys = CORE_GROUPS.flatMap(g => g.keys);
+  const radarDims = radarKeys.map(k => byKey[k]).filter(Boolean);
+  const radarData = radarDims.length > 0 ? {
+    labels: radarDims.map(d => d.label),
     datasets: [{
       label: '归一化值（0-100）',
-      data: dims.map(d => d.value),
+      data: radarDims.map(d => d.value),
       borderColor: C.accent,
       backgroundColor: C.accentSoft,
       pointBackgroundColor: C.accent,
@@ -411,77 +326,115 @@ function TrendContent({ data }) {
   return (
     <div className="space-y-4">
       <StatRow items={[
-        { label: '趋势方向', value: TREND_LABELS[direction] || '未知' },
-        { label: '预测置信度', value: fmtPct(confidence * 100) },
+        { label: '趋势方向', value: TREND_DIRECTION_LABELS[direction] || '未知' },
+        { label: '研判置信度', value: fmtPct(confidence * 100) },
       ]} />
+      {directionBasis && (
+        <p className="text-[10px] text-text-secondary/80 leading-relaxed -mt-1">
+          <span className="text-text-main/80">判据：</span>{directionBasis}
+          <span className="opacity-70">（与研判卡同一口径，确定性计算）</span>
+        </p>
+      )}
 
-      {/* ── 多维画像 ── */}
+      {/* ── 四组核心指标 ── */}
       {dims.length > 0 ? (
         <>
           <div className="bg-card border border-border rounded-xl p-4">
-            <h3 className="text-xs font-semibold text-text-secondary mb-1">舆情多维画像</h3>
+            <h3 className="text-xs font-semibold text-text-secondary mb-1">核心指标</h3>
             <p className="text-[10px] text-text-secondary mb-3 leading-relaxed">
-              九个互相独立的维度，各归一化到 0-100 便于横向比较。样本共 {sample.total ?? 0} 条。
+              支撑研判结论的四个读数，样本共 {sample.total ?? 0} 条。传播结构与数据质量收在下方抽屉。
             </p>
-            <div className="h-52">
-              <Radar
-                data={radarData}
-                options={{
-                  responsive: true,
-                  maintainAspectRatio: false,
-                  plugins: {
-                    legend: { display: false },
-                    tooltip: {
-                      backgroundColor: C.tooltipBg,
-                      borderColor: C.tooltipBorder,
-                      borderWidth: 1,
-                      titleColor: C.tooltipTitle,
-                      bodyColor: C.tooltipBody,
-                      padding: 10,
-                      callbacks: {
-                        label: (ctx) => {
-                          const d = dims[ctx.dataIndex];
-                          return d ? `${d.label}：${d.value} → ${d.display}` : '';
+            {radarData && (
+              <div className="h-44">
+                <Radar
+                  data={radarData}
+                  options={{
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                      legend: { display: false },
+                      tooltip: {
+                        backgroundColor: C.tooltipBg,
+                        borderColor: C.tooltipBorder,
+                        borderWidth: 1,
+                        titleColor: C.tooltipTitle,
+                        bodyColor: C.tooltipBody,
+                        padding: 10,
+                        callbacks: {
+                          label: (ctx) => {
+                            const d = radarDims[ctx.dataIndex];
+                            return d ? `${d.label}：${d.value} → ${d.display}` : '';
+                          },
                         },
                       },
                     },
-                  },
-                  scales: {
-                    r: {
-                      min: 0, max: 100,
-                      ticks: { color: C.axis, backdropColor: 'transparent', font: { size: 9 }, stepSize: 25 },
-                      grid: { color: C.grid },
-                      angleLines: { color: C.grid },
-                      pointLabels: { color: C.axis, font: { size: 10 } },
+                    scales: {
+                      r: {
+                        min: 0, max: 100,
+                        ticks: { color: C.axis, backdropColor: 'transparent', font: { size: 9 }, stepSize: 25 },
+                        grid: { color: C.grid },
+                        angleLines: { color: C.grid },
+                        pointLabels: { color: C.axis, font: { size: 10 } },
+                      },
                     },
-                  },
-                }}
-              />
-            </div>
+                  }}
+                />
+              </div>
+            )}
           </div>
 
-          <Section
-            title="维度明细"
-            icon={<BarChart3 size={12} />}
-            action={
-              <button
-                onClick={() => setShowBasis(v => !v)}
-                className="text-[10px] text-accent hover:text-accent-strong"
-              >
-                {showBasis ? '隐藏计算依据' : '显示计算依据'}
-              </button>
-            }
-          >
-            <div className="space-y-2.5">
-              {dims.map(d => (
-                <DimensionRow key={d.key} dim={d} showBasis={showBasis} />
-              ))}
-            </div>
-            <p className="text-[10px] text-text-secondary mt-3 leading-relaxed">
-              标灰的维度样本量不足，其数值仅供参考，不参与结论推导。
-              归一化只是为了放进同一张图，判读时以原始值为准。
-            </p>
-          </Section>
+          {CORE_GROUPS.map(group => {
+            const rows = group.keys.map(k => byKey[k]).filter(Boolean);
+            if (rows.length === 0) return null;
+            return (
+              <div key={group.label} className="bg-card border border-border rounded-xl p-4">
+                <h3 className="text-xs font-semibold text-text-secondary mb-1">{group.label}</h3>
+                <p className="text-[10px] text-text-secondary mb-3 leading-relaxed">{group.note}</p>
+                <div className="space-y-2.5">
+                  {rows.map(d => (
+                    <DimensionRow key={d.key} dim={d} showBasis={showBasis} />
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+
+          {/* ── 数据质量与传播结构（默认收起） ── */}
+          <div className="bg-card border border-border rounded-xl overflow-hidden">
+            <button
+              onClick={() => setShowQuality(v => !v)}
+              aria-expanded={showQuality}
+              className="w-full flex items-center gap-2 px-4 py-3 text-left hover:bg-hover transition-colors"
+            >
+              {showQuality ? <ChevronDown size={13} className="text-text-secondary shrink-0" />
+                            : <ChevronRight size={13} className="text-text-secondary shrink-0" />}
+              <Layers size={12} className="text-text-secondary shrink-0" />
+              <span className="text-xs font-medium text-text-main">数据质量与传播结构</span>
+              <span className="ml-auto text-[10px] text-text-secondary shrink-0">
+                {showQuality ? '收起' : '展开口径'}
+              </span>
+            </button>
+            {showQuality && (
+              <div className="px-4 pb-4 border-t border-border/60 pt-3 space-y-2.5">
+                {QUALITY_KEYS.map(k => byKey[k]).filter(Boolean).map(d => (
+                  <DimensionRow key={d.key} dim={d} showBasis={showBasis} />
+                ))}
+                <div className="flex items-center justify-between pt-1">
+                  <span className="text-[10px] text-text-secondary">计算依据</span>
+                  <button
+                    onClick={() => setShowBasis(v => !v)}
+                    className="text-[10px] text-accent hover:text-accent-strong"
+                  >
+                    {showBasis ? '隐藏' : '显示'}
+                  </button>
+                </div>
+                <p className="text-[10px] text-text-secondary leading-relaxed">
+                  这一组回答的是"这批数据能不能信"，不是"事件怎么样"。权威占比低或低可信占比高时，
+                  上方核心指标的解读要相应打折。归一化只是为了横向比较，判读时以原始值为准。
+                </p>
+              </div>
+            )}
+          </div>
         </>
       ) : (
         <EmptyHint text="本次运行未取得多维指标（缺少情绪打分样本）" />
@@ -538,12 +491,17 @@ function TrendContent({ data }) {
         <EmptyHint text="本次运行未取得可用的日期序列（样本缺少发布日期）" />
       )}
 
-      {/* ── 情绪指数预测 ── */}
+      {/* ── 热度演化预警 ──
+          措辞刻意不用"预测未来一定如何"。这里给出的是"在既有采集口径不变的
+          前提下，模型认为更可能落在哪一带"，是态势研判不是事实预告。 */}
       {forecastFeasible && predictions.length > 0 ? (
         <div className="bg-card border border-border rounded-xl p-4">
-          <h3 className="text-xs font-semibold text-text-secondary mb-3">
-            未来 {predictions.length} 天情绪指数预测
+          <h3 className="text-xs font-semibold text-text-secondary mb-1">
+            未来 {predictions.length} 日热度演化研判
           </h3>
+          <p className="text-[10px] text-text-secondary mb-3 leading-relaxed">
+            在采集口径不变的前提下，情绪指数更可能落在的区间。不是对事件结果的断言。
+          </p>
           <div className="h-56">
             <Line data={forecastChartData(predictions, C)} options={{ ...optionsFor(C), scales: scaleOptionsFor(C) }} />
           </div>
@@ -555,10 +513,10 @@ function TrendContent({ data }) {
       ) : (
         <MethodNote>
           <p>
-            未出预测：{daily.length < 2
-              ? `本次采集只覆盖 ${daily.length} 个有发布日期的自然日，构不成日粒度序列，"未来 N 天"没有依据。`
-              : '模型未返回预测结果。'}
-            上方多维画像与按天序列仍是本次运行的真实结果，可作为横截面快照判读。
+            未出外推：{daily.length < 2
+              ? `本次采集只覆盖 ${daily.length} 个有发布日期的自然日，构不成日粒度序列，"未来 N 日"没有依据。`
+              : '模型未返回外推结果。'}
+            上方核心指标与按天序列仍是本次运行的真实结果，可作为横截面快照判读。
           </p>
         </MethodNote>
       )}
@@ -683,299 +641,26 @@ function DimensionRow({ dim, showBasis }) {
   );
 }
 
-// ── 情感 ────────────────────────────────────────────────────────────
 
-function SentimentContent({ data }) {
-  const { theme } = useTheme();
-  const C = useChartColors(theme);
-  const s = data?.sentiment_summary || {};
-  const pos = data?.positive_pct || 0;
-  const neg = data?.negative_pct || 0;
-  const neu = data?.neutral_pct || 0;
-  const total = data?.total_news || 0;
+// ── 热词（并入证据 Tab） ────────────────────────────────────────────
 
-  if (total === 0) {
-    return <EmptyHint text="暂无情绪分布数据，请先完成一次分析" />;
-  }
-
-  const posN = data?.positive_count ?? 0;
-  const negN = data?.negative_count ?? 0;
-  const neuN = s.neutral_count ?? Math.max(total - posN - negN, 0);
-
-  const ciPos = wilsonCI(posN, total);
-  const ciNeg = wilsonCI(negN, total);
-  const ciNeu = wilsonCI(neuN, total);
-
-  // ── 从 analyzed_news 现算两个派生视图 ──
-  // 分层拆分与分箱直方图都必须来自同一次运行的真实样本。后端没带
-  // analyzed_news 时（老任务载荷）这两块直接不渲染，不猜。
-  const posts = Array.isArray(data?.analyzed_news) ? data.analyzed_news : [];
-  const scored = posts.filter(p => typeof p.sentiment_score === 'number' && Number.isFinite(p.sentiment_score));
-  const scoredCount = scored.length;
-
-  const tierRows = [1, 2, 3, 4].map(t => {
-    const items = posts.filter(p => Number(p.source_tier) === t);
-    if (items.length === 0) return null;
-    const neg = items.filter(p => p.sentiment_label === 'negative').length;
-    const pos = items.filter(p => p.sentiment_label === 'positive').length;
-    const neu = items.length - neg - pos;
-    return {
-      tier: t,
-      total: items.length,
-      neg, neu, pos,
-      negPct: (neg / items.length) * 100,
-      posPct: (pos / items.length) * 100,
-      ci: wilsonCI(neg, items.length),
-    };
-  }).filter(Boolean);
-
-  // 情绪分分箱：-1.0 ~ 1.0，每 0.2 一箱
-  const histBins = Array.from({ length: 10 }, (_, i) => {
-    const lo = -1 + i * 0.2;
-    return { lo, hi: lo + 0.2, label: `${lo.toFixed(1)}~${(lo + 0.2).toFixed(1)}`, count: 0 };
-  });
-  for (const p of scored) {
-    const idx = Math.min(9, Math.max(0, Math.floor((p.sentiment_score + 1) / 0.2)));
-    histBins[idx].count += 1;
-  }
-  const histData = scoredCount > 0 ? {
-    labels: histBins.map(b => b.label),
-    datasets: [{
-      data: histBins.map(b => b.count),
-      backgroundColor: histBins.map(b => (b.lo + b.hi) / 2 >= 0.1 ? C.success : (b.lo + b.hi) / 2 <= -0.1 ? C.danger : C.neutral),
-      borderRadius: 3,
-      barThickness: 10,
-    }],
-  } : null;
-  const polarCount = scored.filter(p => Math.abs(p.sentiment_score) >= 0.6).length;
-  const meanScore = scoredCount ? scored.reduce((a, p) => a + p.sentiment_score, 0) / scoredCount : 0;
-  const sampleStd = scoredCount > 1
-    ? Math.sqrt(scored.reduce((a, p) => a + (p.sentiment_score - meanScore) ** 2, 0) / (scoredCount - 1))
-    : 0;
-
-  const chartData = {
-    labels: ['负面', '中性', '正面'],
-    datasets: [{
-      data: [neg, neu, pos],
-      backgroundColor: [C.danger, C.neutral, C.success],
-      borderColor: C.card,
-      borderWidth: 2,
-    }],
-  };
-
-  return (
-    <div className="space-y-4">
-      <div className="bg-card border border-border rounded-xl p-4">
-        <h3 className="text-xs font-semibold text-text-secondary mb-3">
-          全网情绪分布（n = {total}）
-        </h3>
-        <div className="h-44">
-          <Doughnut
-            data={chartData}
-            options={{
-              ...optionsFor(C),
-              cutout: '68%',
-              plugins: {
-                ...optionsFor(C).plugins,
-                legend: {
-                  position: 'bottom',
-                  labels: { color: C.axis, boxWidth: 12, font: { size: 11 } },
-                },
-              },
-            }}
-          />
-        </div>
-      </div>
-
-      <Section title="比例估计与 95% 置信区间" icon={<ShieldCheck size={12} />}>
-        <div className="space-y-3">
-          <CIBar label="负面" pct={neg} ci={ciNeg} color={C.danger} />
-          <CIBar label="中性" pct={neu} ci={ciNeu} color={C.neutral} />
-          <CIBar label="正面" pct={pos} ci={ciPos} color={C.success} />
-        </div>
-        <p className="text-[10px] text-text-secondary mt-3 leading-relaxed">
-          圆点为该类占比的点估计，横带是 Wilson score 95% 置信区间。
-          样本越少区间越宽——区间宽到跨过半程时，这个比例不具备区分度。
-        </p>
-      </Section>
-
-      {tierRows.length > 0 && (
-        <Section title="按信源层级拆分" icon={<Layers size={12} />}>
-          <div className="space-y-3">
-            {tierRows.map(r => (
-              <div key={r.tier}>
-                <div className="flex justify-between items-baseline text-[11px] mb-1">
-                  <span className="text-text-secondary">
-                    T{r.tier} {TIER_LABELS[r.tier]}
-                    <span className="text-text-secondary/60 ml-1">n={r.total}</span>
-                  </span>
-                  <span className="tabular-nums" style={{ color: tierColors(C)[r.tier] }}>
-                    {fmtPct(r.negPct)}
-                    </span>
-                </div>
-                <div className="relative h-2.5 rounded-md bg-soft overflow-hidden">
-                  <div className="absolute inset-y-0 left-0 bg-danger/70"
-                    style={{ width: `${r.negPct}%` }} />
-                  <div className="absolute inset-y-0 left-0 bg-success/70"
-                    style={{ left: `${r.negPct}%`, width: `${r.posPct}%` }} />
-                </div>
-                <p className="text-[10px] text-text-secondary/70 mt-0.5 tabular-nums">
-                  负面 {r.neg} · 中性 {r.neu} · 正面 {r.pos}
-                  {r.ci && ` · 负面 95% CI [${r.ci.lower.toFixed(0)}–${r.ci.upper.toFixed(0)}]`}
-                </p>
-              </div>
-            ))}
-          </div>
-          <p className="text-[10px] text-text-secondary mt-3 leading-relaxed">
-            同一批样本按信源层级分开统计才有解释力：T4 自媒体通常系统性放大负面，
-            把它和新华社快讯算进同一个分母，整体"负面占比"会被稀释得看不出结构。
-            层级按域名后缀判定，不做主观拔高。
-          </p>
-        </Section>
-      )}
-
-      {histData && (
-        <div className="bg-card border border-border rounded-xl p-4">
-          <h3 className="text-xs font-semibold text-text-secondary mb-1">情绪分分布</h3>
-          <p className="text-[10px] text-text-secondary mb-3 leading-relaxed">
-            {scoredCount} 条已打分样本，按 0.2 分箱。三档标签会掩盖形态：
-            均值相同的两个分布，一个可能集中在两端（立场对立），
-            另一个集中在中间（共识模糊）。
-          </p>
-          <div className="h-36">
-            <Bar
-              data={histData}
-              options={{
-                ...optionsFor(C),
-                plugins: {
-                  ...optionsFor(C).plugins,
-                  legend: { display: false },
-                  tooltip: {
-                    ...optionsFor(C).plugins.tooltip,
-                    callbacks: {
-                      label: (ctx) => `${ctx.parsed.y} 条 · 区间 ${histBins[ctx.dataIndex]?.label || ''}`,
-                    },
-                  },
-                },
-                scales: {
-                  x: { ticks: { color: C.axis, font: { size: 9 }, maxRotation: 0 }, grid: { display: false } },
-                  y: { ticks: { color: C.axis, font: { size: 10 } }, grid: { color: C.grid } },
-                },
-              }}
-            />
-          </div>
-          <p className="text-[10px] text-text-secondary mt-2 leading-relaxed">
-            标准差 {fmtNum(sampleStd, 3)}，绝对值 ≥ 0.6 的极端样本 {polarCount} 条
-            （{fmtPct(scoredCount ? (polarCount / scoredCount) * 100 : 0)}）。
-          </p>
-        </div>
-      )}
-
-      <StatRow items={[
-        { label: '正面', value: `${posN} 条 · ${fmtPct(pos)}` },
-        { label: '负面', value: `${negN} 条 · ${fmtPct(neg)}` },
-        { label: '中性', value: `${neuN} 条 · ${fmtPct(neu)}` },
-        { label: '情绪均分', value: fmtNum(data?.avg_sentiment ?? s.avg_sentiment) },
-      ]} />
-
-      <Section title="方法论" icon={<Info size={12} />}>
-        <ol className="text-[11px] text-text-secondary leading-relaxed space-y-1.5 list-decimal list-inside">
-          <li>
-            初判：SnowNLP 对「标题 + 摘要」打情绪分（-1 ~ 1），按阈值划为
-            负 / 中 / 正三档。SnowNLP 的训练语料以电商评论为主，对中文财经
-            与政治文本存在系统性偏正，因此它的结果只作为基线。
-          </li>
-          <li>
-            校正：{s.llm_corrected
-              ? '大模型读取前 25 条样本的算法标签后给出校正后的三档计数，再按分数排序把标签重新分配到个体新闻上。'
-              : '大模型校正未生效（无可用 API Key 或调用失败），此处展示的是 SnowNLP 原始分布。'}
-          </li>
-          <li>
-            分母：分母是去重后的新闻条数，不是曝光量。同一事件被 30 家媒体
-            转载会贡献 30 条样本，占比反映的是「报道口径」而非「公众情绪」。
-          </li>
-        </ol>
-      </Section>
-
-      {s.llm_corrected && (
-        <Section title="算法基线 vs 校正后" icon={<Layers size={12} />}>
-          <div className="space-y-2">
-            {[
-              ['负面', negN, s.algo_negative_count ?? 0, C.danger],
-              ['中性', neuN, s.algo_neutral_count ?? 0, C.neutral],
-              ['正面', posN, s.algo_positive_count ?? 0, C.success],
-            ].map(([label, corrected, algo, color]) => (
-              <div key={label} className="flex items-center gap-2">
-                <span className="text-[11px] text-text-secondary w-8 shrink-0">{label}</span>
-                <div className="flex-1 h-2 rounded-full bg-soft relative overflow-hidden">
-                  <div className="absolute inset-y-0 left-0 rounded-full opacity-45"
-                    style={{ width: `${(algo / total) * 100}%`, backgroundColor: color }} />
-                  <div className="absolute inset-y-0 left-0 rounded-full"
-                    style={{ width: `${(corrected / total) * 100}%`, backgroundColor: color }} />
-                </div>
-                <span className="text-[10px] text-text-secondary tabular-nums w-16 text-right shrink-0">
-                  {algo} → {corrected}
-                </span>
-              </div>
-            ))}
-            <p className="text-[10px] text-text-secondary leading-relaxed pt-1">
-              浅色为 SnowNLP 基线，实色为校正后结果。两组数字都来自同一次运行，
-              差异即大模型校正的净效果。
-            </p>
-          </div>
-        </Section>
-      )}
-    </div>
-  );
-}
-
-// 点估计 + 置信区间的「Dot-and-interval」图：竖线是点估计，横带是区间。
-function CIBar({ label, pct, ci, color }) {
-  const lo = ci ? ci.lower : pct;
-  const hi = ci ? ci.upper : pct;
-  return (
-    <div>
-      <div className="flex justify-between items-baseline text-[11px] mb-1">
-        <span className="text-text-secondary">{label}</span>
-        <span className="text-text-main tabular-nums">
-          {fmtPct(pct)}
-          {ci && (
-            <span className="text-text-secondary/70 ml-1.5">
-              [{lo.toFixed(0)}–{hi.toFixed(0)}]
-            </span>
-          )}
-        </span>
-      </div>
-      <div className="relative h-3.5 rounded-md bg-soft overflow-hidden">
-        {ci && (
-          <div
-            className="absolute top-1 bottom-1 rounded-full opacity-35"
-            style={{ left: `${lo}%`, width: `${Math.max(hi - lo, 0.6)}%`, backgroundColor: color }}
-          />
-        )}
-        <div
-          className="absolute top-0.5 bottom-0.5 w-[2px] rounded-full"
-          style={{ left: `calc(${Math.min(Math.max(pct, 0), 100)}% - 1px)`, backgroundColor: color }}
-        />
-      </div>
-    </div>
-  );
-}
-
-// ── 热词 ────────────────────────────────────────────────────────────
-
-function KeywordContent({ data }) {
+/**
+ * 关键词权重区块。
+ *
+ * 归到"证据"Tab 而不是独立 Tab：TF-IDF 说的是"这批语料在讨论什么"，
+ * 是证据的一个侧面，单独占一个 Tab 会把右栏撑成图表集合。
+ *
+ * 权重是 jieba 在本次标题语料上现算的真实统计量。拿不到权重时只列词表
+ * 并明说柱高不可用——用排名反推高度等于编造数值。
+ */
+function KeywordSection({ data }) {
   const { theme } = useTheme();
   const C = useChartColors(theme);
   const weights = Array.isArray(data?.keyword_weights) ? data.keyword_weights : [];
   const plain = Array.isArray(data?.keywords) ? data.keywords : [];
 
-  if (weights.length === 0 && plain.length === 0) {
-    return <EmptyHint text="暂无热词数据" />;
-  }
+  if (weights.length === 0 && plain.length === 0) return null;
 
-  // 有权重就直接画真实 TF-IDF 权重；没有就只列词表并说明柱高不可用，
-  // 绝不拿排名冒充权重。
   const rows = weights.length > 0
     ? weights.slice(0, 12).map(w => ({ term: w.term, value: w.tfidf, doc: w.doc_freq }))
     : [];
@@ -1190,6 +875,15 @@ function EvidenceContent({ data }) {
         </p>
       </div>
 
+      {/* 两个情绪数字的口径必须写在明处。标签是大模型校正后的分布判断，
+          "初判分"是 SnowNLP 对单条文本的连续实测值——两者完全可能一正一负
+          （实测有 +0.91 分却被校正为负面的条目）。不说明的话，读者会把这
+          看成自相矛盾的坏数据。 */}
+      <p className="text-[10px] text-text-secondary/80 leading-relaxed">
+        标签为校正后判断；<span className="text-text-secondary">初判分</span>是 SnowNLP
+        对单条文本的实测值（[-1, 1]），未经校正，两者口径不同。
+      </p>
+
       {/* 情绪分组筛选 */}
       <div className="flex gap-1.5">
         {[
@@ -1276,9 +970,47 @@ function EvidenceContent({ data }) {
         <p>同一事件常被多家媒体转载，本列表已按标题签名与链接去重，但无法识别改头换面的洗稿。</p>
         <p>点击"原文"可跳转核验；本面板只做呈现，不对链接内容做二次校验。</p>
       </MethodNote>
+
+      {/* 关键词权重：这批语料在讨论什么。归到证据 Tab，不单独占一屏。 */}
+      <KeywordSection data={data} />
     </div>
   );
 }
+
+/**
+ * 证据卡。
+ *
+ * 一张卡只回答一个问题：这条证据为什么影响趋势判断。所以固定三段——
+ * 标签（影响量级 · 信源层级 · 日期）、标题、"为什么重要"与"影响"。
+ *
+ * "为什么重要"和"影响"不是模型生成的句子，而是由真实字段推导的呈现层
+ * 解释：信源层级决定这条证据能当"事实"读到什么程度，情绪标签决定它把
+ * 结论往哪边推。推导规则写死在下面，不调用模型——否则每条证据都要等一次
+ * LLM 往返，而且编出来的句子无法复核。
+ */
+const TIER_WEIGHT = {
+  1: '权威信源层面的事实记载',
+  2: '主流媒体的报道口径',
+  3: '门户/地方转载，事实层较薄',
+  4: '自媒体/论坛口径，仅作情绪信号',
+};
+
+const TIER_CAVEAT = {
+  1: '可作为事实依据',
+  2: '有编辑审核，可能带立场',
+  3: '以转载为主，需回溯原始出处',
+  4: '不作为事实依据，仅反映情绪面',
+};
+
+const LABEL_IMPACT = {
+  negative: '把结论推向看空一侧',
+  positive: '把结论推向看多一侧',
+  neutral: '不改变方向，补充事件基本面貌',
+};
+
+const LABEL_TEXT = {
+  negative: '负面', positive: '正面', neutral: '中性',
+};
 
 function EvidenceCard({ post, tier }) {
   const { theme } = useTheme();
@@ -1286,32 +1018,81 @@ function EvidenceCard({ post, tier }) {
   const score = typeof post.sentiment_score === 'number' ? post.sentiment_score : null;
   const labelCls = post.sentiment_label === 'negative' ? 'text-danger'
     : post.sentiment_label === 'positive' ? 'text-success' : 'text-text-secondary';
+  const label = post.sentiment_label || 'neutral';
+
+  // 影响量级只由两个可测字段决定：信源层级（T1/T2 的一手采编与审核流程
+  // 让它们的记载更接近事实）和情绪极性（中性条目不改变结论方向）。
+  // 不引入"热度""重要性评分"这类需要模型主观打分的量。
+  const highImpact = tier <= 2 && label !== 'neutral';
 
   return (
     <div className="bg-card border border-border rounded-xl p-3 hover:border-accent/30 transition-colors group">
-      <div className="flex items-center gap-2 mb-1.5">
+      {/* 标签行：影响量级 · 信源层级 · 日期 */}
+      <div className="flex items-center gap-1.5 mb-1.5 flex-wrap">
+        <span
+          className={clsx(
+            "text-[10px] font-semibold px-1.5 py-0.5 rounded shrink-0 border",
+            highImpact
+              ? "bg-accent/10 text-accent border-accent/25"
+              : "bg-soft text-text-secondary border-border"
+          )}
+          title={highImpact
+            ? 'T1/T2 信源且带明确情绪极性，对结论方向有直接影响'
+            : '转载层信源或中性条目，对结论方向影响有限'}
+        >
+          {highImpact ? '高影响' : '参考'}
+        </span>
         <span
           className="text-[10px] font-semibold px-1.5 py-0.5 rounded shrink-0"
           style={{ color: tierColors(C)[tier], backgroundColor: `${tierColors(C)[tier]}1F` }}
           title={`T${tier} ${TIER_LABELS[tier]} · ${TIER_DESC[tier]}`}
         >
-          T{tier}
+          T{tier} {TIER_LABELS[tier]}
         </span>
-        <span className="text-[11px] font-medium text-text-main truncate">
-          {post.source || post.source_domain || '未知来源'}
-        </span>
-        <span className="text-[10px] text-text-secondary ml-auto shrink-0 tabular-nums">
+        <span className="text-[10px] text-text-secondary shrink-0 tabular-nums">
           {post.publish_time || post.time || '未知时间'}
         </span>
+        <span className="text-[11px] font-medium text-text-main truncate ml-auto">
+          {post.source || post.source_domain || '未知来源'}
+        </span>
       </div>
-      <h5 className="text-xs text-text-main leading-snug mb-1.5">{post.title || '无标题'}</h5>
+
+      <h5 className="text-xs text-text-main leading-snug mb-2">
+        {post.original_title || post.title || '无标题'}
+      </h5>
+
+      {/* 为什么重要 + 影响。两句都由上面的真实字段推出，可逐条复核。 */}
+      <div className="space-y-1 mb-2">
+        <p className="text-[11px] text-text-secondary leading-relaxed">
+          <span className="text-text-main/80 font-medium">为什么重要：</span>
+          {TIER_WEIGHT[tier] || TIER_WEIGHT[4]}，{TIER_CAVEAT[tier] || TIER_CAVEAT[4]}。
+        </p>
+        <p className="text-[11px] text-text-secondary leading-relaxed">
+          <span className="text-text-main/80 font-medium">影响：</span>
+          <span className={labelCls}>{label === 'negative' ? '负面' : label === 'positive' ? '正面' : '中性'}</span>
+          {LABEL_IMPACT[label] || LABEL_IMPACT.neutral}。
+        </p>
+      </div>
+
       <p className="text-[11px] text-text-secondary leading-relaxed mb-2 line-clamp-3 group-hover:line-clamp-none">
         {post.summary || post.content || post.snippet || '（无摘要）'}
       </p>
+
       <div className="flex items-center justify-between pt-2 border-t border-border/60">
         <div className="flex gap-3 text-[10px] text-text-secondary">
-          {score !== null && <span className="tabular-nums">情绪分 {score.toFixed(2)}</span>}
-          {post.sentiment_label && <span className={labelCls}>{post.sentiment_label}</span>}
+          {post.sentiment_label && (
+            <span className={labelCls} title="经大模型校正后的标签">
+              {LABEL_TEXT[label] || label}
+            </span>
+          )}
+          {score !== null && (
+            <span
+              className="tabular-nums opacity-70"
+              title="SnowNLP 实测分，[-1, 1]，未经校正"
+            >
+              初判分 {score > 0 ? '+' : ''}{score.toFixed(2)}
+            </span>
+          )}
         </div>
         {post.url && (
           <a
@@ -1324,6 +1105,354 @@ function EvidenceCard({ post, tier }) {
           </a>
         )}
       </div>
+    </div>
+  );
+}
+
+// ── 事件脉络 ────────────────────────────────────────────────────────
+
+/**
+ * 事件脉络：这个事件是怎么发展到今天的。
+ *
+ * 和"证据"Tab 的分工：证据 Tab 按信源层级回答"谁能当事实读"，这里按时间
+ * 回答"事情按什么顺序发生的"。所以节点是自然日，每天给出当日声量、情绪
+ * 构成和最高信源层级——爆发点、权威回应时点、情绪转向都能在这里看出来。
+ *
+ * 不画趋势线：那是"趋势"Tab 的事。这里只做事实排列，不含任何外推。
+ */
+function TimelineContent({ data }) {
+  const { theme } = useTheme();
+  const C = useChartColors(theme);
+  const [openDay, setOpenDay] = useState(null);
+
+  const posts = data?.analyzed_news || [];
+  if (posts.length === 0) {
+    return <EmptyHint text="暂无事件记录" />;
+  }
+
+  // 按发布日期聚成自然日。没有可解析日期的单独归一组，不猜日期也不丢弃。
+  const byDay = new Map();
+  for (const p of posts) {
+    const raw = String(p.publish_time || p.time || '').trim();
+    const day = raw.length >= 10 ? raw.slice(0, 10) : 'unknown';
+    if (!byDay.has(day)) byDay.set(day, []);
+    byDay.get(day).push(p);
+  }
+  const days = [...byDay.entries()].sort((a, b) => {
+    if (a[0] === 'unknown') return 1;
+    if (b[0] === 'unknown') return -1;
+    return b[0].localeCompare(a[0]);
+  });
+
+  const peak = Math.max(...days.map(([, items]) => items.length));
+
+  return (
+    <div className="space-y-4">
+      <MethodNote>
+        <p>
+          节点为自然日，按当日全部样本统计。纵轴不是等比例时间轴——只列出有样本的日期，
+          空档日不出现在这里。
+        </p>
+        <p>本 Tab 只排列已发生的事实，不含任何预测。外推见「趋势」Tab。</p>
+      </MethodNote>
+
+      <div className="relative pl-4">
+        <div className="absolute left-[5px] top-2 bottom-2 w-px bg-border" />
+        <div className="space-y-1.5">
+          {days.map(([day, items]) => {
+            const isOpen = openDay === day;
+            const neg = items.filter(p => p.sentiment_label === 'negative').length;
+            const pos = items.filter(p => p.sentiment_label === 'positive').length;
+            const topTier = Math.min(...items.map(p => Number(p.source_tier) || 4));
+            const isPeak = items.length === peak && days.length > 1;
+            return (
+              <div key={day} className="relative">
+                <span
+                  className={clsx(
+                    "absolute -left-4 top-2.5 w-[11px] h-[11px] rounded-full border-2 transition-colors",
+                    isPeak ? "bg-danger border-danger"
+                      : isOpen ? "bg-accent border-accent" : "bg-panel border-border"
+                  )}
+                />
+                <button
+                  onClick={() => setOpenDay(isOpen ? null : day)}
+                  className="w-full text-left px-2 py-2 rounded-lg hover:bg-hover transition-colors"
+                >
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <CalendarDays size={10} className="text-text-secondary shrink-0" />
+                    <span className="text-[11px] font-medium text-text-main tabular-nums">
+                      {day === 'unknown' ? '无发布日期' : day}
+                    </span>
+                    <span className="text-[10px] text-text-secondary tabular-nums">{items.length} 条</span>
+                    {isPeak && (
+                      <span className="text-[10px] text-danger font-medium">当日峰值</span>
+                    )}
+                    {neg > 0 && <span className="text-[10px] text-danger tabular-nums">负面 {neg}</span>}
+                    {pos > 0 && <span className="text-[10px] text-success tabular-nums">正面 {pos}</span>}
+                    <span
+                      className="text-[10px] px-1 py-0.5 rounded shrink-0 ml-auto"
+                      style={{ color: tierColors(C)[topTier], backgroundColor: `${tierColors(C)[topTier]}1F` }}
+                      title={`当天最高信源层级：T${topTier} ${TIER_LABELS[topTier]}`}
+                    >
+                      最高 T{topTier}
+                    </span>
+                    <ChevronDown
+                      size={11}
+                      className={clsx("text-text-secondary shrink-0 transition-transform", !isOpen && "-rotate-90")}
+                    />
+                  </div>
+                  {/* 当日声量条。长度相对峰值，让爆发点一眼可见。 */}
+                  <div className="mt-1.5 h-1 rounded-full bg-soft overflow-hidden">
+                    <div
+                      className={clsx("h-full rounded-full", isPeak ? "bg-danger" : "bg-accent/60")}
+                      style={{ width: `${(items.length / peak) * 100}%` }}
+                    />
+                  </div>
+                </button>
+                {isOpen && (
+                  <div className="pl-2 pb-2 space-y-2">
+                    {items.map((p, i) => (
+                      <EvidenceCard key={`${day}-${i}`} post={p} tier={Number(p.source_tier) || 4} />
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── 数据质量 ────────────────────────────────────────────────────────
+
+/**
+ * 数据质量：这批样本能不能支撑上面的结论。
+ *
+ * 三层口径：采集规模与信源分布（样本是谁说的）、情绪打分方法（SnowNLP 初判
+ * 与 LLM 校正的差异，以及校正是否真的生效）、比例的统计不确定性（Wilson
+ * 区间——"负面 34%" 在 n=12 和 n=1200 里的可信度完全不同）。
+ *
+ * 这一 Tab 不重新解释结论，只交代结论的地基。用户想复核时来这里，
+ * 不想复核时不必看。
+ */
+function QualityContent({ data }) {
+  const { theme } = useTheme();
+  const C = useChartColors(theme);
+  const total = data?.total_news || 0;
+  const tierDist = data?.collect_meta?.tier_distribution || {};
+  const sentiment = data?.sentiment_summary || {};
+  const summary = data?.trend_summary || {};
+  const indicators = summary.indicators || {};
+  const sample = indicators.sample || {};
+
+  const hasTierDist = Object.keys(tierDist).length > 0;
+  const llmCorrected = Boolean(sentiment.llm_corrected);
+  const algoTotal = (sentiment.algo_negative_count || 0) + (sentiment.algo_positive_count || 0) + (sentiment.algo_neutral_count || 0);
+  const corrected = (sentiment.negative_count || 0) + (sentiment.positive_count || 0) + (sentiment.neutral_count || 0);
+  const negCI = sentiment.total_news > 0 ? wilsonCI(sentiment.negative_count, sentiment.total_news) : null;
+
+  return (
+    <div className="space-y-4">
+      <Section title="样本规模与信源分布" icon={<Layers size={12} />}>
+        <div className="space-y-2">
+          <div className="flex justify-between text-[11px]">
+            <span className="text-text-secondary">纳入分析的样本</span>
+            <span className="text-text-main tabular-nums">{total} 条</span>
+          </div>
+          <div className="flex justify-between text-[11px]">
+            <span className="text-text-secondary">去重后来源数</span>
+            <span className="text-text-main tabular-nums">{sample.sources ?? '—'} 个</span>
+          </div>
+          <div className="flex justify-between text-[11px]">
+            <span className="text-text-secondary">有可解析发布日期</span>
+            <span className="text-text-main tabular-nums">
+              {sample.known_days ?? '—'} 个自然日
+              {sample.undated ? `（${sample.undated} 条无日期）` : ''}
+            </span>
+          </div>
+        </div>
+        {hasTierDist ? (
+          <div className="space-y-2 mt-3">
+            <div className="flex gap-1.5 h-1.5 rounded-full overflow-hidden bg-soft">
+              {['1', '2', '3', '4'].map(t => {
+                const cnt = Number(tierDist[t] || 0);
+                if (!cnt || !total) return null;
+                return (
+                  <div
+                    key={t}
+                    className="h-full"
+                    style={{ width: `${(cnt / total) * 100}%`, backgroundColor: tierColors(C)[t] }}
+                    title={`${TIER_LABELS[t]}：${cnt} 条`}
+                  />
+                );
+              })}
+            </div>
+            <div className="flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-text-secondary">
+              {['1', '2', '3', '4'].map(t => (
+                <span key={t} className="flex items-center gap-1">
+                  <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: tierColors(C)[t] }} />
+                  {TIER_LABELS[t]} {tierDist[t] || 0}
+                  <span className="opacity-60">
+                    （{total ? Math.round((tierDist[t] || 0) / total * 100) : 0}%）
+                  </span>
+                </span>
+              ))}
+            </div>
+            <p className="text-[10px] text-text-secondary leading-relaxed pt-1">
+              层级按域名后缀判定，不按来源名字符串——来源名由搜索引擎给出，写法不一。
+              未命中可信域名的归入待核验，不做主观拔高。
+            </p>
+          </div>
+        ) : (
+          <p className="text-[10px] text-text-secondary mt-2">本次运行未提供层级统计。</p>
+        )}
+      </Section>
+
+      <Section title="情绪打分方法" icon={<BarChart3 size={12} />}>
+        <div className="space-y-2">
+          <div className="flex justify-between text-[11px]">
+            <span className="text-text-secondary">算法</span>
+            <span className="text-text-main">SnowNLP 初判 + 大模型校正</span>
+          </div>
+          <div className="flex justify-between text-[11px]">
+            <span className="text-text-secondary">LLM 校正</span>
+            <span className={clsx("font-medium", llmCorrected ? 'text-success' : 'text-warning')}>
+              {llmCorrected ? '已生效' : '未生效（本地兜底）'}
+            </span>
+          </div>
+          <div className="flex justify-between text-[11px]">
+            <span className="text-text-secondary">情绪分覆盖</span>
+            <span className="text-text-main tabular-nums">
+              {sample.scored ?? 0}/{sample.total ?? 0} 条
+            </span>
+          </div>
+        </div>
+        {llmCorrected && algoTotal > 0 && corrected > 0 ? (
+          <div className="space-y-2 mt-3">
+            <p className="text-[10px] text-text-secondary leading-relaxed">
+              SnowNLP 对中文财经/政治文本系统性低报负面，所以算法结果只作初判，
+              最终标签按校正后分数排序重排。两者差异如下：
+            </p>
+            <div className="grid grid-cols-3 gap-2">
+              {[
+                { label: '负面', algo: sentiment.algo_negative_count, final: sentiment.negative_count, cls: 'text-danger' },
+                { label: '中性', algo: sentiment.algo_neutral_count, final: sentiment.neutral_count, cls: 'text-text-secondary' },
+                { label: '正面', algo: sentiment.algo_positive_count, final: sentiment.positive_count, cls: 'text-success' },
+              ].map(row => (
+                <div key={row.label} className="bg-soft/60 border border-border rounded-lg p-2">
+                  <div className={clsx("text-[10px] mb-1", row.cls)}>{row.label}</div>
+                  <div className="text-[11px] text-text-main tabular-nums">
+                    {row.final}
+                    <span className="text-text-secondary text-[10px]"> / 算法 {row.algo}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <p className="text-[10px] text-text-secondary mt-2 leading-relaxed">
+            未配置可用的 LLM，或本次校正未返回结果。情绪标签由 SnowNLP 单独给出，
+            对中文财经文本会系统性低报负面——负面占比应视为下限而非精确值。
+          </p>
+        )}
+      </Section>
+
+      <Section title="比例的统计不确定性" icon={<Info size={12} />}>
+        {sentiment.total_news > 0 ? (
+          <div className="space-y-2.5">
+            {[
+              { label: '负面占比', n: sentiment.negative_count, cls: 'text-danger', bar: 'bg-danger' },
+              { label: '正面占比', n: sentiment.positive_count, cls: 'text-success', bar: 'bg-success' },
+            ].map(row => {
+              const ci = wilsonCI(row.n, sentiment.total_news);
+              const pct = (row.n / sentiment.total_news) * 100;
+              return (
+                <div key={row.label}>
+                  <div className="flex justify-between text-[11px] mb-1">
+                    <span className="text-text-secondary">{row.label}</span>
+                    <span className={clsx("tabular-nums font-medium", row.cls)}>{pct.toFixed(1)}%</span>
+                  </div>
+                  {ci && (
+                    <>
+                      <div className="relative h-3">
+                        <div className="absolute inset-x-0 top-1/2 -translate-y-1/2 h-px bg-border" />
+                        <div
+                          className={clsx("absolute top-1/2 -translate-y-1/2 h-1.5 rounded-full opacity-40", row.bar)}
+                          style={{
+                            left: `${ci.lower}%`,
+                            width: `${Math.max(ci.upper - ci.lower, 0.8)}%`,
+                          }}
+                        />
+                        <div
+                          className={clsx("absolute top-1/2 -translate-y-1/2 w-0.5 h-3 -translate-x-px", row.bar)}
+                          style={{ left: `${pct}%` }}
+                        />
+                      </div>
+                      <div className="flex justify-between text-[10px] text-text-secondary mt-0.5 tabular-nums">
+                        <span>95% 区间下界 {ci.lower.toFixed(1)}%</span>
+                        <span>上界 {ci.upper.toFixed(1)}%</span>
+                      </div>
+                    </>
+                  )}
+                </div>
+              );
+            })}
+            <p className="text-[10px] text-text-secondary leading-relaxed pt-1">
+              区间为 Wilson score interval（二项比例的小样本置信区间）。样本越少区间越宽——
+              当前 n={sentiment.total_news}，负面占比的上下界相差{' '}
+              {negCI ? (negCI.upper - negCI.lower).toFixed(1) : '—'} 个百分点。
+              读结论时请连同区间一起读，不要只看点估计。
+            </p>
+          </div>
+        ) : (
+          <p className="text-[11px] text-text-secondary">本次运行未取得情绪分布样本。</p>
+        )}
+      </Section>
+
+      <Section title="模型与数据口径" icon={<BarChart3 size={12} />}>
+        <div className="space-y-2">
+          <div className="flex justify-between text-[11px]">
+            <span className="text-text-secondary">拟合模型</span>
+            <span className="text-text-main">{(MODEL_META[summary.model_type] || MODEL_META.unknown).label}</span>
+          </div>
+          <div className="flex justify-between text-[11px]">
+            <span className="text-text-secondary">时序观测点</span>
+            <span className="text-text-main tabular-nums">{summary.data_points ?? '—'} 个</span>
+          </div>
+          <div className="flex justify-between text-[11px]">
+            <span className="text-text-secondary">外推窗口</span>
+            <span className="text-text-main tabular-nums">{(data?.predictions || []).length} 天</span>
+          </div>
+          <div className="flex justify-between text-[11px]">
+            <span className="text-text-secondary">数据质量评级</span>
+            <span className={clsx(
+              "font-medium",
+              summary.data_quality === '高' ? 'text-success'
+                : summary.data_quality === '中' ? 'text-warning' : 'text-danger'
+            )}>
+              {summary.data_quality || '未知'}
+            </span>
+          </div>
+          <p className="text-[11px] text-text-secondary leading-relaxed pt-1 border-t border-border/60">
+            {(MODEL_META[summary.model_type] || MODEL_META.unknown).desc}
+          </p>
+          {summary.model_type === 'baseline' && summary.fallback_reason && (
+            <p className="text-[11px] text-danger/90 leading-relaxed">
+              降级原因：{summary.fallback_reason}
+            </p>
+          )}
+          {summary.data_note && (
+            <p className="text-[11px] text-text-main/80 leading-relaxed">{summary.data_note}</p>
+          )}
+        </div>
+      </Section>
+
+      <Disclaimer>
+        本面板所有数字均由本次采集的样本算出，不含外部基准或行业均值。
+        样本覆盖度受采集渠道与检索词影响，不应解读为全量舆情。
+      </Disclaimer>
     </div>
   );
 }

@@ -4,7 +4,8 @@ import LeftSidebar from '../LeftSidebar/LeftSidebar';
 import CenterWorkspace from '../CenterWorkspace/CenterWorkspace';
 import RightInsightPanel from '../RightInsightPanel/RightInsightPanel';
 import { useAgentSocket } from '../../hooks/useAgentSocket';
-import { analyzeKeyword, fetchHistory, fetchProjects, fetchTaskDetail } from '../../services/api';
+import { analyzeKeyword, fetchHistory, fetchProjects, fetchTaskDetail, deleteTask } from '../../services/api';
+import DepthSelector, { useAnalysisDepth, resolveDepth } from '../CenterWorkspace/DepthSelector';
 
 // 侧栏宽度的取值范围。下限要能容纳图标 + 主按钮，上限按视口比例算，
 // 不然 4K 屏上能把中间工作区挤到看不见。
@@ -123,7 +124,7 @@ export default function MainLayout() {
   const [rightCollapsed, setRightCollapsed] = useState(false);
   const [leftWidth, setLeftWidth] = useState(LEFT_DEFAULT);
   const [rightWidth, setRightWidth] = useState(RIGHT_DEFAULT);
-  const [activeTab, setActiveTab] = useState('verdict');
+  const [activeTab, setActiveTab] = useState('trend');
 
   // App state
   const [currentTaskId, setCurrentTaskId] = useState(null);
@@ -133,6 +134,10 @@ export default function MainLayout() {
   // 非空表示正在回放一场历史对话。此时 useAgentSocket 不开 socket、不采集，
   // 直接把那一次的发言和分析数据播种进界面。
   const [restored, setRestored] = useState(null);
+
+  // 查看深度。它决定结果默认展开到哪一层、右栏默认停在哪个 Tab——
+  // 后端全量流水线每次都完整跑，这一档只影响呈现，不影响计算。
+  const { depth, setDepth, meta: depthMeta } = useAnalysisDepth();
 
   // Socket hook
   const {
@@ -186,7 +191,7 @@ export default function MainLayout() {
       setRestored(detail);
       setCurrentTaskId(detail.task_id || taskId);
       setCurrentQuery(detail.keyword || '');
-      setActiveTab('verdict');
+      setActiveTab('trend');
     } catch (err) {
       alert(err.message || '打开历史对话失败');
     }
@@ -219,12 +224,45 @@ export default function MainLayout() {
     }
   }, [currentTaskId, sendFollowup]);
 
+  /**
+   * 删除一条历史对话。
+   *
+   * 删的是磁盘上的任务记录、完整结果和项目记忆里的会话原文——不可恢复，
+   * 所以确认放在调用方（左栏）做，这里只负责发请求和同步三份状态：
+   * 历史列表、项目分组、以及"当前正在看的那一场"。如果删的正是当前场次，
+   * 必须立刻清空主区，否则界面还留着一段已经不存在的数据。
+   */
+  const handleDeleteSession = useCallback(async (taskId) => {
+    if (!taskId) return;
+    try {
+      await deleteTask(taskId);
+      setHistory(prev => prev.filter(h => h.task_id !== taskId));
+      setGroups(prev => prev
+        .map(g => ({ ...g, conversations: (g.conversations || []).filter(c => c.taskId !== taskId) }))
+        .filter(g => (g.conversations || []).length > 0 || g.id === '__loose__'));
+      if (currentTaskId === taskId) {
+        setRestored(null);
+        setCurrentTaskId(null);
+        setCurrentQuery('');
+      }
+    } catch (err) {
+      alert(err.message || '删除对话失败');
+    }
+  }, [currentTaskId]);
+
   const handleNewAnalysis = useCallback(() => {
     setRestored(null);
     setCurrentTaskId(null);
     setCurrentQuery('');
-    setActiveTab('verdict');
+    setActiveTab('trend');
   }, []);
+
+  // 换深度时把右栏切到该档的默认 Tab。用户选了"深度审计"却还停在核心指标
+  // 上，等于这一档没生效——切过去才是"我会拿到什么"的即时反馈。
+  const handleDepthChange = useCallback((next) => {
+    setDepth(next);
+    setActiveTab(resolveDepth(next).tab);
+  }, [setDepth]);
 
   // 折叠时把手也要能点：整条都收起来之后，用户需要一个明显的入口把它拉回来。
   // 这里在折叠态下保留一个常驻小按钮，不依赖把手的热区。
@@ -241,6 +279,7 @@ export default function MainLayout() {
               onRerun={handleStartAnalysis}
               onRefreshHistory={() => { loadHistory(); loadGroups(); }}
               onNewAnalysis={handleNewAnalysis}
+              onDeleteSession={handleDeleteSession}
               activeTaskId={currentTaskId}
             />
           </div>
@@ -281,6 +320,9 @@ export default function MainLayout() {
           followupStreaming={followupStreaming}
           debatePending={debatePending}
           restored={Boolean(restored)}
+          analysisData={analysisData}
+          depth={depth}
+          onDepthChange={handleDepthChange}
         />
       </div>
 
@@ -300,6 +342,7 @@ export default function MainLayout() {
               onTabChange={setActiveTab}
               analysisData={analysisData}
               onCollapse={() => setRightCollapsed(true)}
+              depth={depth}
             />
           </div>
         </>

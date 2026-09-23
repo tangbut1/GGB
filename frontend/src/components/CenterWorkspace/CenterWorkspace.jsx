@@ -1,6 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Share, Download, MessageSquare, Bot, AlertTriangle, TrendingUp, Send, CheckCircle2, ChevronRight, Gavel, Database, FileText, User, Sparkles } from 'lucide-react';
 import clsx from 'clsx';
+import VerdictCard from './VerdictCard';
+import AnalysisProcess from './AnalysisProcess';
+import DepthSelector, { resolveDepth } from './DepthSelector';
 
 // 角色 → 卡片样式（与后端 ROLE_MAP 对应）
 const ROLE_STYLES = {
@@ -65,6 +68,9 @@ export default function CenterWorkspace({
   followupStreaming,
   debatePending,
   restored,
+  analysisData,
+  depth,
+  onDepthChange,
 }) {
   const [inputValue, setInputValue] = useState('');
   const scrollRef = useRef(null);
@@ -74,6 +80,10 @@ export default function CenterWorkspace({
   // 不锁的话用户会在辩论中途再发一条，两轮发言交错，"第 N 轮"就串了。
   const busy = isAnalyzing || Boolean(debatePending);
   const hasSession = Boolean(currentQuery);
+
+  // 研判卡由后端从实测指标算出，是这一屏的主视图。拿不到就退回聊天流——
+  // 老任务（后端上线研判卡之前跑的）没有这个字段，不能因此什么都不显示。
+  const verdictCard = analysisData?.verdict_card || null;
 
   // 新内容到达时自动滚动到底部
   useEffect(() => {
@@ -113,7 +123,7 @@ export default function CenterWorkspace({
           </h1>
           {hasSession && (
             <span className="text-[11px] text-text-secondary bg-soft px-2 py-1 rounded-full border border-border">
-              {restored ? '历史对话' : '红蓝辩论 · 裁判终裁'}
+              {restored ? '历史对话' : verdictCard ? '态势研判 · 裁判终裁' : '红蓝辩论 · 裁判终裁'}
             </span>
           )}
           {/* 回放历史时"重新分析"必须是显式动作：点左侧记录要看的是那一次
@@ -195,9 +205,23 @@ export default function CenterWorkspace({
           </div>
         )}
 
-        {turns.map((turn) => (
-          <TurnCard key={turn.id} turn={turn} onSelectAgent={onSelectAgent} />
-        ))}
+        {/* 主视图是研判卡，不是聊天流。有结论时把四段发言从主列撤下来，
+            折叠进「分析过程」；分析进行中还没有结论，此时显示实时发言，
+            让用户看到流水线确实在跑、而不是对着一块空白等。 */}
+        {verdictCard ? (
+          <>
+            <VerdictCard card={verdictCard} />
+            <AnalysisProcess
+              turns={turns}
+              verdict={analysisData?.verdict}
+              defaultExpanded={resolveDepth(depth).expandProcess}
+            />
+          </>
+        ) : (
+          turns.map((turn) => (
+            <TurnCard key={turn.id} turn={turn} onSelectAgent={onSelectAgent} />
+          ))
+        )}
 
         {followups.map((f) => (
           <FollowupBubble key={f.id} followup={f} />
@@ -206,8 +230,8 @@ export default function CenterWorkspace({
         {!hasSession && turns.length === 0 && (
           <div className="flex flex-col items-center justify-center py-16 text-text-secondary">
             <Sparkles size={32} className="mb-3 opacity-40" />
-            <p className="text-sm">输入关键词，红蓝双方将围绕它展开辩论</p>
-            <p className="text-xs mt-1 opacity-70">红方（危机分析师）看空风险 · 蓝方（理性分析师）寻找破局 · 裁判给出结构化终裁</p>
+            <p className="text-sm">输入一个事件、品牌或话题，生成态势研判</p>
+            <p className="text-xs mt-1 opacity-70">先给结论、风险等级与可验证的核心依据，分析过程折叠在后</p>
           </div>
         )}
 
@@ -216,17 +240,20 @@ export default function CenterWorkspace({
 
       <div className="absolute bottom-0 left-0 w-full p-6 bg-gradient-to-t from-app via-app to-transparent pt-12 pointer-events-none">
         <div className="max-w-4xl mx-auto pointer-events-auto">
-          <div className="flex gap-2 mb-2 px-2">
-            {['红方观点是否成立？', '蓝方的数据依据是什么？', '综合双方论据给出结论'].map(tag => (
-              <span
-                key={tag}
-                onClick={() => !busy && setInputValue(prev => prev + tag + ' ')}
-                className="text-[11px] text-text-secondary hover:text-text-main cursor-pointer bg-soft px-2 py-1 rounded-md border border-border"
-              >
-                {tag}
-              </span>
-            ))}
-          </div>
+            <div className="flex justify-between items-center px-2 mb-2">
+              <div className="flex gap-2">
+                {['红方观点是否成立？', '蓝方的数据依据是什么？', '综合双方论据给出结论'].map(tag => (
+                  <span
+                    key={tag}
+                    onClick={() => !busy && setInputValue(prev => prev + tag + ' ')}
+                    className="text-[11px] text-text-secondary hover:text-text-main cursor-pointer bg-soft px-2 py-1 rounded-md border border-border"
+                  >
+                    {tag}
+                  </span>
+                ))}
+              </div>
+              <DepthSelector depth={depth} onChange={onDepthChange} />
+            </div>
 
           <div className="bg-sidebar border border-border rounded-input shadow-lg flex flex-col p-2 focus-within:border-border/80 focus-within:ring-1 focus-within:ring-border/50 transition-all relative">
             <textarea

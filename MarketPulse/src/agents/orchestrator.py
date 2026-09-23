@@ -26,6 +26,7 @@ from .trend_agent import TrendAgent
 from .report_agent import ReportAgent
 from ..events import PipelineEvent, ForumEvent, ReportEvent, ErrorEvent
 from ..forum.llm_host import LLMHost
+from ..analysis.verdict_card import build_verdict_card
 
 # 辩论角色映射：前端按 role 渲染红/蓝/裁判卡片
 ROLE_MAP = {
@@ -299,6 +300,16 @@ class OrchestratorAgent:
         report_data = report_res.get("data", {}).get("report_data", {})
         report_data["collect_meta"] = collect_meta
         report_data["verdict"] = verdict
+        # 研判卡：风险分/趋势方向/观察窗口/核心证据全部由实测指标算出，
+        # 与裁判 LLM 是否可用无关。放在 report_data 里随终局一起下发，
+        # 前端拿它做主视图，不再让用户先读四段发言。
+        report_data["verdict_card"] = build_verdict_card(
+            keyword=self.keyword,
+            verdict=verdict,
+            indicators=(trend_res.get("data", {})
+                        .get("trend_summary", {}).get("indicators", {})),
+            analyzed_news=sent_res["data"].get("analyzed_news", []),
+        )
 
         # 生成 HTML 报告文件
         try:

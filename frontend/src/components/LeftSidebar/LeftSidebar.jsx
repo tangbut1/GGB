@@ -2,7 +2,7 @@ import React, { useMemo, useState } from 'react';
 import {
   Search, Plus, MessageSquare, Clock, LayoutTemplate, PanelLeftClose,
   Hash, RefreshCw, Inbox, Sparkles, Radar, Sun, Moon, FolderOpen, Brain,
-  RotateCw, ChevronDown, X,
+  RotateCw, ChevronDown, X, Trash2,
 } from 'lucide-react';
 import clsx from 'clsx';
 import { useTheme } from '../../theme';
@@ -39,6 +39,7 @@ export default function LeftSidebar({
   onRerun,
   onRefreshHistory,
   onNewAnalysis,
+  onDeleteSession,
   activeTaskId,
 }) {
   // 宽度由 MainLayout 的拖拽把手控制，本组件只负责"展开/收起"两个状态。
@@ -181,6 +182,7 @@ export default function LeftSidebar({
                   onToggle={() => toggleGroup(group.id)}
                   onOpenSession={onOpenSession}
                   onRerun={onRerun}
+                  onDeleteSession={onDeleteSession}
                   activeTaskId={activeTaskId}
                 />
               ))
@@ -240,7 +242,7 @@ export default function LeftSidebar({
  * 跨会话记忆的意义就在这一层：第二次分析同一主题时，前一次得出的结论
  * （含"已确认/待验证"状态）会作为背景进入双方视野。
  */
-function ProjectGroup({ group, collapsed, onToggle, onOpenSession, onRerun, activeTaskId }) {
+function ProjectGroup({ group, collapsed, onToggle, onOpenSession, onRerun, onDeleteSession, activeTaskId }) {
   const convs = group.conversations || [];
   return (
     <div className="rounded-lg border border-border bg-soft/40 overflow-hidden">
@@ -280,6 +282,7 @@ function ProjectGroup({ group, collapsed, onToggle, onOpenSession, onRerun, acti
                 active={c.taskId === activeTaskId}
                 onClick={() => onOpenSession?.(c.taskId)}
                 onRerun={() => onRerun?.(c.title)}
+                onDelete={() => onDeleteSession?.(c.taskId)}
               />
             ))
           )}
@@ -289,8 +292,23 @@ function ProjectGroup({ group, collapsed, onToggle, onOpenSession, onRerun, acti
   );
 }
 
-function SessionItem({ item, active, onClick, onRerun }) {
+function SessionItem({ item, active, onClick, onRerun, onDelete }) {
   const meta = STATUS_META[item.status] || STATUS_META.completed;
+  // 删除是不可恢复的，且"重新分析"就在旁边——点错的代价很高。
+  // 所以不用 window.confirm（它会打断浏览并禁用页面样式），改成条目内联的
+  // 两步确认：第一次点露出"确认删除"，第二次才真正发请求。
+  const [confirming, setConfirming] = useState(false);
+  const running = item.status === 'running' || item.status === 'waiting';
+
+  const handleDelete = (e) => {
+    e.stopPropagation();
+    if (running) return;
+    if (!confirming) {
+      setConfirming(true);
+      return;
+    }
+    onDelete?.();
+  };
 
   return (
     <div
@@ -326,6 +344,38 @@ function SessionItem({ item, active, onClick, onRerun }) {
         >
           <RotateCw size={9} /> 重新分析
         </button>
+        {confirming ? (
+          <>
+            <button
+              onClick={handleDelete}
+              title="确认删除，不可恢复"
+              className="flex items-center gap-1 text-danger hover:text-danger/80 font-medium"
+            >
+              <Trash2 size={9} /> 确认删除
+            </button>
+            <button
+              onClick={(e) => { e.stopPropagation(); setConfirming(false); }}
+              title="取消"
+              className="text-text-secondary hover:text-text-main"
+            >
+              取消
+            </button>
+          </>
+        ) : (
+          <button
+            onClick={(e) => { e.stopPropagation(); setConfirming(true); }}
+            disabled={running}
+            title={running ? '分析进行中，暂不能删除' : '删除这条对话（含原始数据）'}
+            className={clsx(
+              "flex items-center gap-1 transition-opacity",
+              running
+                ? "opacity-30 cursor-not-allowed"
+                : "opacity-0 group-hover:opacity-100 hover:text-danger"
+            )}
+          >
+            <Trash2 size={9} /> 删除
+          </button>
+        )}
       </div>
     </div>
   );

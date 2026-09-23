@@ -118,6 +118,7 @@ def compute_indicators(analyzed_news: list) -> dict:
 
     tiers = [int(_safe_float(n.get("source_tier"), 4)) for n in items]
     tier1 = sum(1 for t in tiers if t <= 1)
+    tier2 = sum(1 for t in tiers if t == 2)
     tier4 = sum(1 for t in tiers if t >= 4)
 
     sources: Dict[str, int] = {}
@@ -258,6 +259,7 @@ def compute_indicators(analyzed_news: list) -> dict:
             "negative": negative,
             "sources": len(sources),
             "tier1": tier1,
+            "tier2": tier2,
             "tier4": tier4,
             "known_days": len(known_days),
             "undated": undated,

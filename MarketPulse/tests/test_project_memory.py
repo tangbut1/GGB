@@ -54,6 +54,79 @@ def test_find_conversation_by_task(store):
     assert store.find_conversation_by_task("nope") is None
 
 
+def test_delete_conversation_by_task_removes_messages_too(store):
+    """删会话必须连发言原文一起删。
+
+    只删会话行的话，messages 里那一大段原文还留着，get_messages 仍能取出来，
+    "删除"就成了假的——用户以为清掉了，检索还能命中。
+    """
+    pid = store.ensure_project("华为")
+    cid = store.start_conversation(pid, "task_del", "华为")
+    store.append_message(cid, "user", "华为最近怎么样", author="user")
+    store.append_message(cid, "agent", "红方立论内容", author="SentimentAgent", round_no=1)
+    store.finish_conversation(cid, summary="看空", status="completed")
+
+    assert store.delete_conversation_by_task("task_del") is True
+    assert store.find_conversation_by_task("task_del") is None
+    assert store.get_messages(cid) == []
+    assert store.list_conversations(pid) == []
+
+
+def test_delete_conversation_keeps_project_level_memories(store):
+    """项目记忆不跟着会话删。
+
+    memories 是从多次分析里提炼的项目知识，不是某一次对话的副本。跟着删会
+    把用户在其他会话里积累的认知一起清掉——那超出了"删除这条对话"的意图。
+    """
+    pid = store.ensure_project("比亚迪")
+    store.remember(pid, "Q3 交付量同比下滑", kind="finding", status="confirmed")
+    cid = store.start_conversation(pid, "task_del2", "比亚迪")
+    store.append_message(cid, "user", "比亚迪怎么样", author="user")
+
+    store.delete_conversation_by_task("task_del2")
+
+    memories = store.list_memories(pid)
+    assert len(memories) == 1
+    assert memories[0]["content"] == "Q3 交付量同比下滑"
+
+
+def test_delete_conversation_only_touches_the_named_task(store):
+    pid = store.ensure_project("小米")
+    keep = store.start_conversation(pid, "task_keep", "小米")
+    drop = store.start_conversation(pid, "task_drop", "小米")
+    store.append_message(keep, "user", "留下这条", author="user")
+    store.append_message(drop, "user", "删掉这条", author="user")
+
+    assert store.delete_conversation_by_task("task_drop") is True
+
+    convs = store.list_conversations(pid)
+    assert [c["task_id"] for c in convs] == ["task_keep"]
+    kept = store.get_messages(keep)
+    assert len(kept) == 1 and kept[0]["content"] == "留下这条"
+
+
+def test_delete_conversation_unknown_task_returns_false(store):
+    assert store.delete_conversation_by_task("nope") is False
+
+
+def test_delete_conversation_survives_reopen(tmp_path):
+    """删除要落库，不能只改内存——重启后不能又冒出来。"""
+    path = str(tmp_path / "memory.db")
+    s1 = ProjectMemoryStore(path)
+    pid = s1.ensure_project("华为")
+    cid = s1.start_conversation(pid, "task_reopen", "华为")
+    s1.append_message(cid, "user", "内容", author="user")
+    assert s1.delete_conversation_by_task("task_reopen") is True
+    s1.close()
+
+    s2 = ProjectMemoryStore(path)
+    try:
+        assert s2.find_conversation_by_task("task_reopen") is None
+        assert s2.get_messages(cid) == []
+    finally:
+        s2.close()
+
+
 def test_memory_dedupes_identical_content(store):
     pid = store.ensure_project("比亚迪")
     m1 = store.remember(pid, "Q3 交付量同比下滑", kind="finding", status="confirmed")

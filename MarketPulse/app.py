@@ -530,6 +530,9 @@ def analyze():
                 },
                 # 红蓝辩论裁判终裁
                 "verdict": report_data.get("verdict", {}),
+                # 研判卡：风险分/趋势方向/观察窗口/核心证据，由实测指标确定性
+                # 算出。这是中间区域的默认主视图，不是辩论的附属说明。
+                "verdict_card": report_data.get("verdict_card", {}),
                 # 标记数据来源
                 "from_backend": True
             })
@@ -912,6 +915,34 @@ def history_detail(task_id):
             "time": _store_time(entry),
         }))
     return jsonify({"error": "Not found"}), 404
+
+
+@app.route('/history/<task_id>', methods=['DELETE'])
+def history_delete(task_id):
+    """删除一条历史对话：任务记录、完整结果、会话与发言。
+
+    三处都要清掉，只删一处会留下能恢复出来的残影——侧边栏看不见，但
+    /history/<id> 仍能取回 payload，或者项目记忆里还留着那段发言原文。
+
+    正在运行的任务不删：删了任务文件，后台线程跑完还会再写回来，反而留下
+    一个"已删除但状态是 completed"的僵尸记录。让用户先停或等它结束。
+    """
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", task_id):
+        return jsonify({"error": "非法的 task_id"}), 400
+
+    if task_id in tasks and tasks[task_id].get("status") in ("running", "pending"):
+        return jsonify({"error": "任务正在分析中，无法删除"}), 409
+
+    removed = task_store.delete(task_id)
+    memory_store.delete_conversation_by_task(task_id)
+    # 内存里的两份也要同步：task_history 是 /history 的数据源，tasks 里若
+    # 有残留条目会让 /status 与侧边栏继续显示这条已删除的记录。
+    task_history[:] = [t for t in task_history if t.get("task_id") != task_id]
+    tasks.pop(task_id, None)
+
+    if not removed:
+        return jsonify({"error": "Not found"}), 404
+    return jsonify({"deleted": task_id})
 
 
 def _session_detail(base: dict) -> dict:

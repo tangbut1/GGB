@@ -51,6 +51,22 @@ export async function fetchTaskDetail(taskId) {
   return response.json();
 }
 
+/**
+ * 删除一条历史对话。
+ *
+ * 后端会同时清掉任务记录、完整结果 payload、以及项目记忆里的会话原文。
+ * 正在分析中的任务会返回 409——那种任务的后台线程还活着，删了也会被写回。
+ */
+export async function deleteTask(taskId) {
+  const response = await fetch(`/api/history/${encodeURIComponent(taskId)}`, {
+    method: 'DELETE',
+  });
+  if (!response.ok) {
+    await readError(response, '删除对话失败');
+  }
+  return response.json();
+}
+
 /** 项目列表（跨会话记忆的分组单位），每项附带会话摘要。 */
 export async function fetchProjects() {
   const response = await fetch('/api/projects');

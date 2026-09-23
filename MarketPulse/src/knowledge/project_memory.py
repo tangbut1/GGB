@@ -294,6 +294,36 @@ class ProjectMemoryStore:
             )
             return self._rows(cur)
 
+    def delete_conversation_by_task(self, task_id: str) -> bool:
+        """删掉一次分析对应的会话及其全部发言。
+
+        发言和会话必须一起删：只删会话行的话，messages 里那一大段原文还挂在
+        项目记忆里，下次 get_messages 仍能取出来，"删除"就成了假的。
+
+        项目级的 memories 不动。那是从多次分析里提炼出来的项目知识（口径、
+        结论、长期关注点），不是某一次对话的副本；跟着删会把用户在其他会话
+        里积累的认知一起清掉。想清理那些有 retire_memory。
+
+        两条 DELETE 都按 task_id / conversation_id 绑定，没有字符串拼接。
+        """
+        with self._lock:
+            conn = self._conn()
+            row = conn.execute(
+                "SELECT conversation_id FROM conversations WHERE task_id = ?",
+                (task_id,),
+            ).fetchone()
+            if not row:
+                return False
+            conversation_id = row["conversation_id"]
+            # messages 表对 conversation_id 有 ON DELETE CASCADE，但 pragma
+            # foreign_keys 是按连接设的，这里显式删一遍，不依赖它一定开着。
+            conn.execute(
+                "DELETE FROM messages WHERE conversation_id = ?", (conversation_id,))
+            conn.execute(
+                "DELETE FROM conversations WHERE conversation_id = ?", (conversation_id,))
+            conn.commit()
+            return True
+
     # ── 发言原文 ────────────────────────────────────────────────────────────
 
     def append_message(

@@ -8,7 +8,7 @@ import threading
 import requests
 import yaml
 from pathlib import Path
-from flask import Flask, render_template, request, jsonify, send_file, Response
+from flask import Flask, request, jsonify, send_file, Response
 from flask_socketio import SocketIO
 from flask_cors import CORS
 from src.forum.log_manager import LogManager
@@ -338,7 +338,10 @@ _seed_history_from_store()
 
 @app.route('/')
 def index():
-    return render_template('index.html')
+    return jsonify({
+        "service": "MarketPulse",
+        "message": "后端 API 服务。前端请启动 Vite 开发服务器（默认 http://localhost:5173）",
+    })
 
 
 @app.route('/report/<task_id>')

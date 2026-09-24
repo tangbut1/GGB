@@ -35,6 +35,14 @@ logs/
 !package.json
 !package-lock.json
 
+# 案例包是刻意提交的交付物：界面截图、一次完整运行的机器可读结果、
+# 后端生成的 HTML 报告。没有这些文件，案例就只有一段文字描述。
+!cases/
+!cases/**/
+!cases/**/*.png
+!cases/**/*.json
+!cases/**/*.html
+
 # Jupyter
 .ipynb_checkpoints/
 *.ipynb

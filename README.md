@@ -51,6 +51,10 @@ Windows 下也可直接运行 `MarketPulse/start.bat` 启动后端。
 - **追问引发复辩**：追问不是让一个模型再答一遍，而是红蓝双方各自复辩、裁判出补充裁定，轮次从 3 起算，复用首轮数据
 - **SSRF 防护**：所有外发请求统一经 `src/net_safety.py` 校验，拒绝环回/私有/CGNAT/保留地址
 
+## 演示案例
+
+[`cases/zcode-privacy-event/`](cases/zcode-privacy-event/) 保存了一次完整运行的实录：以「zcode后端偷偷上传用户隐私」为关键词，采集 9 条样本、两轮红蓝辩论、终裁中性（综合风险分 45.7/100，行动信号 watch_out）。目录内含 13 张界面截图、机器可读的全量运行结果（`case-data.json`）与后端生成的 HTML 报告（`report.html`），三者同源，可离线对照复核。采集结果随时间变化，复现时数值以当次运行为准。
+
 ## 配置
 
 模型配置三层覆盖，优先级从高到低：
@@ -80,12 +84,14 @@ MarketPulse/              Flask + SocketIO 后端（红蓝辩论内核）
   tests/                  pytest 测试
   scripts/                手动诊断脚本（打真实搜索与 LLM，耗时花钱）
 frontend/                 React 18 + Vite 前端（研判工作台）
-  src/Layout/             主布局 + 侧栏拖拽调宽
-  src/CenterWorkspace/    辩论卡片 + 输入框 + 追问
-  src/RightInsightPanel/  终裁 / 趋势 / 情感 / 热词 / 证据 五个 Tab
+  src/components/Layout/  主布局 + 侧栏拖拽调宽
+  src/components/LeftSidebar/  分析记录 + 主题切换 + 设置入口
+  src/components/CenterWorkspace/  终裁卡 + 辩论发言 + 输入框 + 追问
+  src/components/RightInsightPanel/  趋势 / 证据（含热词） / 事件脉络 / 数据质量 四个 Tab
+  src/components/Settings/  模型与会话设置面板
 ```
 
-前端界面是研判工作台：右侧五个 Tab 各对应一种可复现的算法输出，缺数据时明确说明而不是展示假数据。
+前端界面是研判工作台：终裁卡在中栏，右侧四个 Tab 各对应一种可复现的算法输出，缺数据时明确说明而不是展示假数据。
 
 ## 测试
 
